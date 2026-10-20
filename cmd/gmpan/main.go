@@ -129,37 +129,75 @@ func run() error {
 	if e != nil {
 		return e
 	}
-	server := &http.Server{Addr: c.Listen, Handler: s.Handler(), ReadHeaderTimeout: 10 * time.Second, IdleTimeout: 90 * time.Second, MaxHeaderBytes: 32 << 10}
+	c = s.Config
+	server := siteHTTPServer(s)
 	return serve(ctx, cancel, server, s, c, logger)
 }
+func siteHTTPServer(s *app.Server) *http.Server {
+	return &http.Server{Addr: s.Config.Listen, Handler: s.Handler(), ReadHeaderTimeout: 10 * time.Second, IdleTimeout: 90 * time.Second, MaxHeaderBytes: 32 << 10}
+}
 func runHTTP(ctx context.Context, server *http.Server, s *app.Server, c app.Config, logger *slog.Logger) error {
-	s.StartWorkers(ctx)
-	done := make(chan error, 1)
-	go func() {
-		var e error
+	for {
+		restart := make(chan struct{}, 1)
+		s.SetRestartHandler(func() {
+			select {
+			case restart <- struct{}{}:
+			default:
+			}
+		})
+		workerCtx, stopWorkers := context.WithCancel(ctx)
+		s.StartWorkers(workerCtx)
+		done := make(chan error, 1)
+		go func(current *http.Server, config app.Config) {
+			if config.TLSCert != "" {
+				done <- current.ListenAndServeTLS(config.TLSCert, config.TLSKey)
+			} else {
+				done <- current.ListenAndServe()
+			}
+		}(server, c)
+		scheme := "http"
 		if c.TLSCert != "" {
-			e = server.ListenAndServeTLS(c.TLSCert, c.TLSKey)
-		} else {
-			e = server.ListenAndServe()
+			scheme = "https"
 		}
-		done <- e
-	}()
-	scheme := "http"
-	if c.TLSCert != "" {
-		scheme = "https"
-	}
-	logger.Info("server_started", "listen", c.Listen)
-	fmt.Println("GmPan: " + scheme + "://" + c.Listen)
-	select {
-	case e := <-done:
-		if e != http.ErrServerClosed {
-			return e
+		logger.Info("server_started", "listen", c.Listen)
+		fmt.Println("GmPan: " + scheme + "://" + c.Listen)
+		reloading := false
+		var listenErr error
+		select {
+		case <-restart:
+			reloading = true
+		case <-ctx.Done():
+		case listenErr = <-done:
 		}
-		return nil
-	case <-ctx.Done():
+		s.SetRestartHandler(nil)
 		shutdown, cancel := context.WithTimeout(context.Background(), 20*time.Second)
-		defer cancel()
-		return server.Shutdown(shutdown)
+		shutdownErr := server.Shutdown(shutdown)
+		cancel()
+		if shutdownErr != nil {
+			_ = server.Close()
+		}
+		stopWorkers()
+		s.WaitWorkers()
+		if listenErr != nil && listenErr != http.ErrServerClosed {
+			return listenErr
+		}
+		if shutdownErr != nil && !reloading {
+			return shutdownErr
+		}
+		if shutdownErr != nil {
+			logger.Warn("site_restart_closed_active_connections")
+		}
+		if !reloading || ctx.Err() != nil {
+			return nil
+		}
+		logger.Info("site_restarting")
+		next, err := app.NewServer(s.DB, c, logger)
+		if err != nil {
+			return err
+		}
+		s = next
+		c = next.Config
+		server = siteHTTPServer(next)
 	}
 }
 func certificate(args []string) error {

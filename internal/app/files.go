@@ -43,6 +43,8 @@ type Entry struct {
 	OwnerName     string    `json:"owner_name"`
 	CanManage     bool      `json:"can_manage"`
 	CanApprove    bool      `json:"can_approve"`
+	CanDownload   bool      `json:"can_download"`
+	ScanWarning   bool      `json:"scan_warning"`
 }
 
 const entryFields = "e.id,e.parent_id,e.space_key,e.scope,e.owner_id,e.dept_id,e.kind,e.name,e.remark,e.size,e.mime,e.storage_kind,COALESCE(e.storage_path,''),e.sha256,e.scan_status,e.scan_note,e.publication,e.deleted,e.source_mtime,e.source_missing,e.created_at,e.updated_at,COALESCE(u.display_name,'历史资料'),e.trash_batch"
@@ -88,6 +90,7 @@ func (s *Server) getEntry(id string, u *User) (*Entry, error) {
 	}
 	v.CanManage = canManage(u, v)
 	v.CanApprove = canModerate(u, v)
+	s.presentEntry(v)
 	return v, nil
 }
 func space(u *User, scope string) (string, string, error) {
@@ -221,6 +224,7 @@ func (s *Server) listFiles(w http.ResponseWriter, r *http.Request, u *User) erro
 		}
 		v.CanManage = canManage(u, v)
 		v.CanApprove = canModerate(u, v)
+		s.presentEntry(v)
 		out = append(out, v)
 	}
 	if e = rows.Err(); e != nil {
@@ -494,7 +498,7 @@ func (s *Server) approveFile(w http.ResponseWriter, r *http.Request, u *User) er
 	}
 	status := "rejected"
 	if p.Approve {
-		if v.ScanStatus != "clean" {
+		if !s.scanAccess(v) {
 			return bad("通过病毒检查后才能发布")
 		}
 		status = "published"
@@ -533,7 +537,7 @@ func (s *Server) content(w http.ResponseWriter, r *http.Request, u *User) error 
 	if v.Deleted || v.Kind != "file" {
 		return notfound()
 	}
-	if v.ScanStatus != "clean" || v.SourceMissing {
+	if !s.scanAccess(v) {
 		return apiError{423, "文件尚未通过安全检查或源文件不可用"}
 	}
 	p, e := s.entryPath(v)
@@ -557,6 +561,9 @@ func (s *Server) content(w http.ResponseWriter, r *http.Request, u *User) error 
 		return apiError{423, "文件发生变化，需重新安全检查"}
 	}
 	disposition := "attachment"
+	if v.MIME == "application/octet-stream" {
+		v.MIME = sniffFileMIME(p)
+	}
 	if r.URL.Query().Get("preview") == "true" && inlineMIME(v.MIME) {
 		disposition = "inline"
 	}

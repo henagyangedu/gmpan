@@ -257,7 +257,9 @@ func (s *Server) systemInfo(w http.ResponseWriter, r *http.Request, u *User) err
 	if e := s.DB.QueryRow("SELECT COALESCE(SUM(scan_status='pending'),0),COALESCE(SUM(scan_status='failed'),0),COALESCE(SUM(scan_status='infected'),0) FROM entries WHERE kind='file' AND deleted=0").Scan(&pending, &failed, &infected); e != nil {
 		return e
 	}
-	writeJSON(w, 200, map[string]any{"company_name": companyName, "legacy_configured": s.Config.LegacyRoot != "", "legacy_root": s.Config.LegacyRoot, "scanner_configured": s.scan != nil, "sms_enabled": s.smsEnabled(), "max_file_bytes": s.Config.MaxFileBytes, "chunk_size": ChunkSize, "pending_scans": pending, "failed_scans": failed, "infected_files": infected})
+	policy := s.scanSettings()
+	active, _ := policy.window(time.Now())
+	writeJSON(w, 200, map[string]any{"company_name": companyName, "legacy_configured": s.Config.LegacyRoot != "", "legacy_root": s.Config.LegacyRoot, "scanner_configured": s.scan != nil, "sms_enabled": s.smsEnabled(), "max_file_bytes": s.Config.MaxFileBytes, "chunk_size": ChunkSize, "pending_scans": pending, "failed_scans": failed, "infected_files": infected, "virus_scan": policy, "scan_active": active && s.scan != nil})
 	return nil
 }
 func (s *Server) auditList(w http.ResponseWriter, r *http.Request, u *User) error {
@@ -291,6 +293,9 @@ func (s *Server) retryScans(w http.ResponseWriter, r *http.Request, u *User) err
 	}
 	if s.scan == nil {
 		return bad("请先配置病毒扫描程序并重启服务")
+	}
+	if s.scanSettings().Mode == "off" {
+		return bad("病毒检查已关闭，请由超管启用后再重试")
 	}
 	result, e := s.DB.Exec("UPDATE entries SET scan_status='pending',scan_note='' WHERE scan_status='failed' AND kind='file'")
 	if e != nil {

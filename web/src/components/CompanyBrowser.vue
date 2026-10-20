@@ -13,10 +13,10 @@ const currentName = computed(() => props.ancestors.at(-1)?.name || '公司资料
 function size(n: number) { if (!n) return '0 B'; const u = ['B','KB','MB','GB','TB'], i = Math.min(Math.floor(Math.log(n) / Math.log(1024)),4); return `${(n / 1024 ** i).toFixed(i > 1 ? 1 : 0)} ${u[i]}` }
 function kind(f: Resource) { return f.kind === 'folder' ? 'folder' : f.mime.startsWith('video/') ? 'video' : /\.(zip|rar|7z|tar|gz|tgz|bz2|xz)$/i.test(f.name) ? 'archive' : f.mime.startsWith('image/') ? 'image' : 'file' }
 function fileIcon(f: Resource) { return ({ folder: Folder, video: VideoPlay, archive: Box, image: Picture, file: Document })[kind(f)] }
-function ready(f: Resource) { return f.kind === 'file' && f.scan_status === 'clean' && !f.source_missing && !f.deleted }
+function ready(f: Resource) { return f.can_download }
 function imagePreviewable(f: Resource) { return ['image/jpeg','image/png','image/gif','image/webp','image/avif','image/bmp'].includes(f.mime) }
 function playable(f: Resource) { return ['video/mp4','video/webm'].includes(f.mime) }
-function state(f: Resource) { if (f.kind === 'folder') return ''; return f.source_missing ? '源文件缺失' : f.publication === 'pending' ? '待发布审核' : f.publication === 'rejected' ? '审核未通过' : f.scan_status === 'clean' ? '' : ({ pending:'待安全检查', scanning:'安全检查中', failed:'检查失败', infected:'已阻止访问' }[f.scan_status] || f.scan_status) }
+function state(f: Resource) { if(f.kind==='folder')return '';if(f.source_missing)return '源文件缺失';return [f.publication==='pending'?'待发布审核':f.publication==='rejected'?'审核未通过':'',f.scan_warning?'未执行病毒检查':f.scan_status==='clean'?'':({pending:'待安全检查',scanning:'安全检查中',failed:'检查失败',infected:'已阻止访问'}[f.scan_status]||f.scan_status)].filter(Boolean).join(' · ') }
 async function loadTree(node: any, resolve: (items: any[]) => void, reject?: () => void) { if (node.level === 0) { resolve([{ id: '', name: '公司资料' }]); return }; try { treeError.value = ''; resolve(await props.api(`/company/folders?parent=${encodeURIComponent(node.data.id)}`)) } catch (e: any) { treeError.value = e.message; ElMessage.error(e.message); if (reject) reject(); else resolve([]) } }
 function toggleSelected(f:Resource,value:boolean) {emit('select',value ? [...props.selected.filter(item => item.id !== f.id),f] : props.selected.filter(item => item.id !== f.id))}
 function refreshTree() { treeVersion.value++; treeError.value = '' }

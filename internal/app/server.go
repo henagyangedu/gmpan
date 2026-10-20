@@ -8,6 +8,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"io/fs"
 	"log/slog"
@@ -24,21 +25,29 @@ import (
 )
 
 type Server struct {
-	DB          *sql.DB
-	Config      Config
-	Log         *slog.Logger
-	mux         *http.ServeMux
-	mu          sync.Mutex
-	scan        Scanner
-	smsClient   *http.Client
-	siteMu      sync.RWMutex
-	site        SiteSettings
-	siteLogo    []byte
-	smsMu       sync.RWMutex
-	smsSettings SMSSettings
-	archiveMu   sync.Mutex
-	archiveBusy bool
-	archiveJob  *folderArchive
+	DB            *sql.DB
+	Config        Config
+	Log           *slog.Logger
+	mux           *http.ServeMux
+	mu            sync.Mutex
+	scan          Scanner
+	smsClient     *http.Client
+	siteMu        sync.RWMutex
+	site          SiteSettings
+	siteLogo      []byte
+	smsMu         sync.RWMutex
+	smsSettings   SMSSettings
+	archiveMu     sync.Mutex
+	archiveBusy   bool
+	archiveJob    *folderArchive
+	restartMu     sync.RWMutex
+	restartFn     func()
+	restarting    bool
+	instanceID    string
+	workers       sync.WaitGroup
+	scanControlMu sync.Mutex
+	scanWorkMu    sync.Mutex
+	scanCancel    context.CancelFunc
 }
 type apiError struct {
 	Status  int
@@ -72,12 +81,19 @@ func NewServer(db *sql.DB, c Config, logger *slog.Logger) (*Server, error) {
 			return nil, e
 		}
 	}
-	s := &Server{DB: db, Config: c, Log: logger, mux: http.NewServeMux(), smsClient: &http.Client{Timeout: 12 * time.Second, CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}}
+	if settings.ListenPort > 0 {
+		host, _, err := net.SplitHostPort(c.Listen)
+		if err != nil {
+			return nil, err
+		}
+		c.Listen = net.JoinHostPort(host, fmt.Sprint(settings.ListenPort))
+	}
+	s := &Server{DB: db, Config: c, Log: logger, mux: http.NewServeMux(), instanceID: newID(), smsClient: &http.Client{Timeout: 12 * time.Second, CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}}
 	s.site, s.siteLogo = settings, logo
 	if err := s.validateSitePaths(settings); err != nil {
 		return nil, err
 	}
-	if s.smsSettings, err = loadSMSSettings(db, c); err != nil {
+	if s.smsSettings, err = loadSMSSettings(db); err != nil {
 		return nil, err
 	}
 	if c.ClamScanPath != "" {
@@ -123,6 +139,10 @@ func (s *Server) route(pattern string, authed bool, fn endpoint) {
 			}
 		}
 		if e == nil {
+			if r.Method != "GET" && r.Method != "HEAD" && s.isRestarting() {
+				s.replyError(w, apiError{503, "站点正在重启，请稍后重试"})
+				return
+			}
 			e = fn(w, r, u)
 		}
 		if e != nil {
@@ -177,7 +197,7 @@ func (s *Server) routes() {
 		if s.DB.PingContext(ctx) != nil {
 			return apiError{503, "数据库不可用"}
 		}
-		writeJSON(w, 200, map[string]any{"status": "ok"})
+		writeJSON(w, 200, map[string]any{"status": "ok", "instance_id": s.instanceID})
 		return nil
 	})
 	s.route("GET /api/public-config", false, s.publicConfig)
@@ -186,6 +206,11 @@ func (s *Server) routes() {
 	s.route("GET /api/admin/sms-settings", true, s.getSMSSettings)
 	s.route("PUT /api/admin/sms-settings", true, s.saveSMSSettings)
 	s.route("PUT /api/admin/site-settings", true, s.saveSiteSettings)
+	s.route("GET /api/admin/scan-settings", true, s.getScanSettings)
+	s.route("PUT /api/admin/scan-settings", true, s.saveScanSettings)
+	s.route("GET /api/admin/directories", true, s.browseDirectories)
+	s.route("PUT /api/admin/listen-port", true, s.saveListenPort)
+	s.route("POST /api/admin/restart", true, s.restartSite)
 	s.route("PUT /api/admin/site-logo", true, s.uploadSiteLogo)
 	s.route("DELETE /api/admin/site-logo", true, s.deleteSiteLogo)
 	s.route("GET /api/company/folders", true, s.companyFolders)

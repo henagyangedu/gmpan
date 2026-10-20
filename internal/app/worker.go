@@ -41,7 +41,9 @@ func (c CommandScanner) Check(ctx context.Context, path string) (string, string)
 func (s *Server) StartWorkers(ctx context.Context) {
 	_, _ = s.DB.Exec("UPDATE import_jobs SET status='interrupted',error_note='服务重启，可重新扫描',finished_at=NOW(6) WHERE status='running'")
 	_, _ = s.DB.Exec("UPDATE entries SET scan_status='pending' WHERE scan_status='scanning'")
+	s.workers.Add(2)
 	go func() {
+		defer s.workers.Done()
 		tick := time.NewTicker(3 * time.Second)
 		defer tick.Stop()
 		for {
@@ -56,6 +58,7 @@ func (s *Server) StartWorkers(ctx context.Context) {
 		}
 	}()
 	go func() {
+		defer s.workers.Done()
 		tick := time.NewTicker(time.Hour)
 		defer tick.Stop()
 		for {
@@ -68,7 +71,12 @@ func (s *Server) StartWorkers(ctx context.Context) {
 		}
 	}()
 }
+func (s *Server) WaitWorkers() { s.workers.Wait() }
+
 func (s *Server) scanBatch(ctx context.Context) {
+	if allowed, _ := s.scanSettings().window(time.Now()); !allowed {
+		return
+	}
 	rows, e := s.DB.Query("SELECT id FROM entries WHERE kind='file' AND scan_status='pending' AND source_missing=0 AND deleted=0 ORDER BY created_at LIMIT 10")
 	if e != nil {
 		s.Log.Error("scan queue unavailable")
@@ -90,6 +98,14 @@ func (s *Server) scanBatch(ctx context.Context) {
 	}
 }
 func (s *Server) scanOne(ctx context.Context, id string) {
+	s.scanWorkMu.Lock()
+	defer s.scanWorkMu.Unlock()
+	taskCtx, finish, allowed := s.scanTaskContext(ctx)
+	if !allowed {
+		return
+	}
+	defer finish()
+	ctx = taskCtx
 	result, e := s.DB.Exec("UPDATE entries SET scan_status='scanning' WHERE id=? AND scan_status='pending'", id)
 	if e != nil {
 		return
@@ -108,6 +124,8 @@ func (s *Server) scanOne(ctx context.Context, id string) {
 	if e == nil {
 		f, err := os.Open(p)
 		if err == nil {
+			stopClose := context.AfterFunc(ctx, func() { _ = f.Close() })
+			defer stopClose()
 			before, err := f.Stat()
 			if err == nil && before.Mode().IsRegular() {
 				header := make([]byte, 512)
@@ -133,7 +151,7 @@ func (s *Server) scanOne(ctx context.Context, id string) {
 	}
 	if ctx.Err() != nil {
 		status = "pending"
-		note = "服务停止，等待重新检查"
+		note = "检查已暂停，等待下次检查时间或设置更新"
 	}
 	_, e = s.DB.Exec("UPDATE entries SET scan_status=?,scan_note=?,sha256=?,mime=? WHERE id=? AND scan_status='scanning'", status, note, hash, mimeType, id)
 	if e != nil {

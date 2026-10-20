@@ -92,7 +92,7 @@ func (s *Server) archiveItems(ctx context.Context, u *User, root *Entry) ([]arch
 					return nil, 0, bad("目录下载每次最多 500 个文件、2 GiB，请分批下载")
 				}
 				total += v.Size
-				if v.ScanStatus != "clean" || v.SourceMissing {
+				if !s.scanAccess(v) {
 					rows.Close()
 					return nil, 0, apiError{423, "目录中有未通过安全检查或缺失的可见文件，请处理后再下载"}
 				}
@@ -292,7 +292,7 @@ func (s *Server) downloadFolderArchive(w http.ResponseWriter, r *http.Request, u
 		if e != nil {
 			return notfound()
 		}
-		if current.Deleted || current.SpaceKey != item.entry.SpaceKey || (current.Kind == "file" && (current.ScanStatus != "clean" || current.SourceMissing || current.StoragePath != item.entry.StoragePath || current.SourceMtime != item.entry.SourceMtime || current.Size != item.entry.Size)) {
+		if current.Deleted || current.SpaceKey != item.entry.SpaceKey || (current.Kind == "file" && (!s.scanAccess(current) || current.StoragePath != item.entry.StoragePath || current.SourceMtime != item.entry.SourceMtime || current.Size != item.entry.Size)) {
 			return conflict("目录内容或权限已变化，请重新打包")
 		}
 	}

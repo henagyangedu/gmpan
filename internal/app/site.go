@@ -9,25 +9,29 @@ import (
 	_ "image/jpeg"
 	"image/png"
 	"io"
+	"net"
 	"net/http"
 	"net/url"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"unicode/utf8"
 )
 
 type SiteSettings struct {
-	CompanyName           string `json:"company_name"`
-	CompanyShortName      string `json:"company_short_name"`
-	Copyright             string `json:"copyright"`
-	CopyrightURL          string `json:"copyright_url"`
-	DefaultTheme          string `json:"default_theme"`
-	StorageRoot           string `json:"storage_root"`
-	StorageWarningPercent int    `json:"storage_warning_percent"`
-	DataDir               string `json:"data_dir,omitempty"` // Read old settings during an offline upgrade only.
-	LegacyRoot            string `json:"legacy_root,omitempty"`
-	Revision              int64  `json:"revision"`
+	CompanyName           string       `json:"company_name"`
+	CompanyShortName      string       `json:"company_short_name"`
+	Copyright             string       `json:"copyright"`
+	CopyrightURL          string       `json:"copyright_url"`
+	DefaultTheme          string       `json:"default_theme"`
+	StorageRoot           string       `json:"storage_root"`
+	StorageWarningPercent int          `json:"storage_warning_percent"`
+	ListenPort            int          `json:"listen_port"`
+	VirusScan             ScanSettings `json:"virus_scan"`
+	DataDir               string       `json:"data_dir,omitempty"` // Read old settings during an offline upgrade only.
+	LegacyRoot            string       `json:"legacy_root,omitempty"`
+	Revision              int64        `json:"revision"`
 }
 
 func loadSiteSettings(db *sql.DB, c Config) (SiteSettings, []byte, error) {
@@ -45,6 +49,9 @@ func loadSiteSettings(db *sql.DB, c Config) (SiteSettings, []byte, error) {
 		v.CompanyShortName = string([]rune(v.CompanyShortName)[:24])
 	}
 	v.StorageWarningPercent = 10
+	v.VirusScan = defaultScanSettings()
+	_, port, _ := net.SplitHostPort(c.Listen)
+	v.ListenPort, _ = strconv.Atoi(port)
 	b, _ := json.Marshal(v)
 	if _, e := db.Exec("INSERT IGNORE INTO site_settings(id,settings) VALUES(1,?)", b); e != nil {
 		return v, nil, fmt.Errorf("请先执行 migrate 初始化站点配置表: %w", e)
@@ -66,6 +73,12 @@ func loadSiteSettings(db *sql.DB, c Config) (SiteSettings, []byte, error) {
 }
 
 func validateSiteSettings(v SiteSettings) error {
+	if err := validateScanSettings(v.VirusScan); err != nil {
+		return err
+	}
+	if v.ListenPort < 0 || v.ListenPort > 65535 {
+		return bad("监听端口需为 1～65535")
+	}
 	if v.StorageWarningPercent < 1 || v.StorageWarningPercent > 99 {
 		return bad("剩余空间告警阈值需为 1～99%")
 	}
@@ -164,7 +177,7 @@ func (s *Server) publicConfig(w http.ResponseWriter, _ *http.Request, _ *User) e
 	if len(s.siteLogo) > 0 {
 		logo = fmt.Sprintf("/api/site-logo?v=%d", s.site.Revision)
 	}
-	writeJSON(w, 200, map[string]any{"company_name": s.site.CompanyName, "company_short_name": s.site.CompanyShortName, "copyright": s.site.Copyright, "copyright_url": s.site.CopyrightURL, "default_theme": s.site.DefaultTheme, "logo_url": logo, "sms_enabled": s.smsEnabled(), "folder_transfer_limits": folderTransferLimits()})
+	writeJSON(w, 200, map[string]any{"company_name": s.site.CompanyName, "company_short_name": s.site.CompanyShortName, "copyright": s.site.Copyright, "copyright_url": s.site.CopyrightURL, "default_theme": s.site.DefaultTheme, "logo_url": logo, "sms_enabled": s.smsEnabled(), "folder_transfer_limits": folderTransferLimits(), "virus_scan_mode": s.site.VirusScan.Mode})
 	return nil
 }
 func (s *Server) siteLogoContent(w http.ResponseWriter, _ *http.Request, _ *User) error {
@@ -181,7 +194,12 @@ func (s *Server) siteResponse() map[string]any {
 	settings := s.site
 	settings.DataDir = ""
 	settings.LegacyRoot = ""
-	return map[string]any{"settings": settings, "has_logo": len(s.siteLogo) > 0, "active_storage_root": s.Config.StorageRoot, "deployment_dir": deploymentDirectory(), "migration_required": s.Config.StorageRoot == "", "previous_data_dir": s.Config.DataDir, "previous_source_dir": s.Config.LegacyRoot, "restart_required": !sameDirectory(s.site.StorageRoot, s.Config.StorageRoot)}
+	_, activePort, _ := net.SplitHostPort(s.Config.Listen)
+	currentPort, _ := strconv.Atoi(activePort)
+	s.restartMu.RLock()
+	canRestart := s.restartFn != nil
+	s.restartMu.RUnlock()
+	return map[string]any{"settings": settings, "has_logo": len(s.siteLogo) > 0, "active_storage_root": s.Config.StorageRoot, "deployment_dir": deploymentDirectory(), "migration_required": s.Config.StorageRoot == "", "previous_data_dir": s.Config.DataDir, "previous_source_dir": s.Config.LegacyRoot, "restart_required": !sameDirectory(s.site.StorageRoot, s.Config.StorageRoot) || (s.site.ListenPort != 0 && s.site.ListenPort != currentPort), "active_listen": s.Config.Listen, "active_port": currentPort, "can_restart": canRestart, "instance_id": s.instanceID}
 }
 func (s *Server) getSiteSettings(w http.ResponseWriter, _ *http.Request, u *User) error {
 	if e := superAdmin(u); e != nil {
@@ -205,11 +223,19 @@ func (s *Server) saveSiteSettings(w http.ResponseWriter, r *http.Request, u *Use
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	if s.isRestarting() {
+		return conflict("站点正在重启，请稍后重试")
+	}
 	s.siteMu.Lock()
 	defer s.siteMu.Unlock()
 	if v.Revision != s.site.Revision {
 		return conflict("站点配置已被更新，请重新加载后保存")
 	}
+	if v.ListenPort != 0 && v.ListenPort != s.site.ListenPort {
+		return bad("请使用“修改监听端口”按钮变更端口")
+	}
+	v.ListenPort = s.site.ListenPort
+	v.VirusScan = s.site.VirusScan
 	if v.StorageRoot == "" {
 		if s.site.StorageRoot != "" {
 			return bad("文件存储和读取目录不能为空")
@@ -232,6 +258,9 @@ func (s *Server) saveSiteSettings(w http.ResponseWriter, r *http.Request, u *Use
 		}
 		if n > 0 {
 			return conflict("已有文件、索引或未完成任务，不能直接切换目录；请备份、停服后执行 unify-storage 迁移")
+		}
+		if e := checkStorageWritable(v.StorageRoot); e != nil {
+			return e
 		}
 	}
 	v.Revision++

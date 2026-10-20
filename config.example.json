@@ -9,11 +9,5 @@
   "max_file_bytes": 10737418240,
   "personal_quota_bytes": 21474836480,
   "clamscan_path": "",
-  "clam_database_dir": "",
-  "sms": {
-    "base_url": "https://sms.gmwang.com.cn/api/v1",
-    "app_key": "",
-    "app_secret": "",
-    "login_scene": ""
-  }
+  "clam_database_dir": ""
 }

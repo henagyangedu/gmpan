@@ -74,6 +74,16 @@ func sourceHash(root, relative string) string {
 	}
 	return digest(p)
 }
+func sniffFileMIME(path string) string {
+	f, err := os.Open(path)
+	if err != nil {
+		return "application/octet-stream"
+	}
+	defer f.Close()
+	buf := make([]byte, 512)
+	n, _ := f.Read(buf)
+	return http.DetectContentType(buf[:n])
+}
 func (s *Server) startImport(w http.ResponseWriter, r *http.Request, u *User) error {
 	if e := admin(u); e != nil {
 		return e
@@ -99,6 +109,9 @@ func (s *Server) startImport(w http.ResponseWriter, r *http.Request, u *User) er
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	if s.isRestarting() {
+		return conflict("站点正在重启，请稍后再扫描")
+	}
 	if s.directoryChangePending(false) {
 		return conflict("读取目录等待生效，请重启服务后再扫描")
 	}
@@ -266,21 +279,33 @@ func (s *Server) upsertImported(jobID, rootHash, key, parent, name, relative, ow
 	}
 	var existing string
 	var oldSize, oldMtime int64
+	var oldMIME string
 	var missing bool
-	e := s.DB.QueryRow("SELECT id,size,source_mtime,source_missing FROM entries WHERE source_key=?", key).Scan(&existing, &oldSize, &oldMtime, &missing)
+	e := s.DB.QueryRow("SELECT id,size,source_mtime,source_missing,mime FROM entries WHERE source_key=?", key).Scan(&existing, &oldSize, &oldMtime, &missing, &oldMIME)
 	if e == nil {
 		changed := oldSize != size || oldMtime != mtime || missing
 		if changed {
-			_, e = s.DB.Exec("UPDATE entries SET size=?,source_mtime=?,scan_status=?,scan_note='',sha256='',source_missing=0,import_seen=?,updated_at=NOW(6) WHERE id=?", size, mtime, status, jobID, existing)
+			mimeType := "application/octet-stream"
+			if kind == "file" {
+				mimeType = sniffFileMIME(filepath.Join(s.Config.LegacyRoot, filepath.FromSlash(relative)))
+			}
+			_, e = s.DB.Exec("UPDATE entries SET size=?,source_mtime=?,mime=?,scan_status=?,scan_note='',sha256='',source_missing=0,import_seen=?,updated_at=NOW(6) WHERE id=?", size, mtime, mimeType, status, jobID, existing)
 			return existing, "updated", e
 		}
-		_, e = s.DB.Exec("UPDATE entries SET import_seen=? WHERE id=?", jobID, existing)
+		if kind == "file" && oldMIME == "application/octet-stream" {
+			oldMIME = sniffFileMIME(filepath.Join(s.Config.LegacyRoot, filepath.FromSlash(relative)))
+		}
+		_, e = s.DB.Exec("UPDATE entries SET import_seen=?,mime=? WHERE id=?", jobID, oldMIME, existing)
 		return existing, "skipped", e
 	}
 	if !errors.Is(e, sql.ErrNoRows) {
 		return "", "", e
 	}
 	id := newID()
-	_, e = s.DB.Exec("INSERT INTO entries(id,parent_id,space_key,scope,owner_id,kind,name,name_hash,remark,size,mime,storage_kind,storage_path,source_key,source_root_hash,import_seen,scan_status,source_mtime,publication) VALUES(?,?,'company','company',?,?,?,?,?,?,'application/octet-stream','legacy',?,?,?,?,?,?,'published')", id, parent, owner, kind, name, digest(strings.ToLower(name)), "", size, relative, key, rootHash, jobID, status, mtime)
+	mimeType := "application/octet-stream"
+	if kind == "file" {
+		mimeType = sniffFileMIME(filepath.Join(s.Config.LegacyRoot, filepath.FromSlash(relative)))
+	}
+	_, e = s.DB.Exec("INSERT INTO entries(id,parent_id,space_key,scope,owner_id,kind,name,name_hash,remark,size,mime,storage_kind,storage_path,source_key,source_root_hash,import_seen,scan_status,source_mtime,publication) VALUES(?,?,'company','company',?,?,?,?,?,?,?,'legacy',?,?,?,?,?,?,'published')", id, parent, owner, kind, name, digest(strings.ToLower(name)), "", size, mimeType, relative, key, rootHash, jobID, status, mtime)
 	return id, "added", e
 }

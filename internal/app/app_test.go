@@ -101,7 +101,7 @@ func TestSMSWireProtocol(t *testing.T) {
 		io.WriteString(w, response)
 	}))
 	defer server.Close()
-	s := &Server{Config: Config{SMS: SMSConfig{BaseURL: server.URL, AppKey: "test-key", AppSecret: "test-secret"}}, smsClient: server.Client()}
+	s := &Server{smsSettings: SMSSettings{SMSConfig: SMSConfig{BaseURL: server.URL, AppKey: "test-key", AppSecret: "test-secret"}, Revision: 1}, smsClient: server.Client()}
 	payload := map[string]string{"scene": "login", "mobile": "13800000000"}
 	if e := s.smsRequest("/verify-code/send", payload); e != nil {
 		t.Fatal(e)

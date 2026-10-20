@@ -4,7 +4,6 @@ import (
 	"encoding/json"
 	"errors"
 	"net"
-	"net/url"
 	"os"
 	"path/filepath"
 	"strings"
@@ -12,28 +11,21 @@ import (
 
 const ChunkSize int64 = 5 * 1024 * 1024
 
-type SMSConfig struct {
-	BaseURL    string `json:"base_url"`
-	AppKey     string `json:"app_key"`
-	AppSecret  string `json:"app_secret"`
-	LoginScene string `json:"login_scene"`
-}
 type Config struct {
-	ConfigPath         string    `json:"-"`
-	Listen             string    `json:"listen"`
-	DSN                string    `json:"mysql_dsn"`
-	StorageRoot        string    `json:"storage_root"`
-	DataDir            string    `json:"data_dir"`
-	LogDir             string    `json:"log_dir"`
-	LegacyRoot         string    `json:"legacy_root"`
-	CompanyName        string    `json:"company_name"`
-	TLSCert            string    `json:"tls_cert"`
-	TLSKey             string    `json:"tls_key"`
-	MaxFileBytes       int64     `json:"max_file_bytes"`
-	PersonalQuotaBytes int64     `json:"personal_quota_bytes"`
-	ClamScanPath       string    `json:"clamscan_path"`
-	ClamDatabaseDir    string    `json:"clam_database_dir"`
-	SMS                SMSConfig `json:"sms"`
+	ConfigPath         string `json:"-"`
+	Listen             string `json:"listen"`
+	DSN                string `json:"mysql_dsn"`
+	StorageRoot        string `json:"storage_root"`
+	DataDir            string `json:"data_dir"`
+	LogDir             string `json:"log_dir"`
+	LegacyRoot         string `json:"legacy_root"`
+	CompanyName        string `json:"company_name"`
+	TLSCert            string `json:"tls_cert"`
+	TLSKey             string `json:"tls_key"`
+	MaxFileBytes       int64  `json:"max_file_bytes"`
+	PersonalQuotaBytes int64  `json:"personal_quota_bytes"`
+	ClamScanPath       string `json:"clamscan_path"`
+	ClamDatabaseDir    string `json:"clam_database_dir"`
 }
 
 func LoadConfig(path string) (Config, error) {
@@ -47,12 +39,6 @@ func LoadConfig(path string) (Config, error) {
 	}
 	if v := os.Getenv("GMPAN_DSN"); v != "" {
 		c.DSN = v
-	}
-	if v := os.Getenv("GMPAN_SMS_KEY"); v != "" {
-		c.SMS.AppKey = v
-	}
-	if v := os.Getenv("GMPAN_SMS_SECRET"); v != "" {
-		c.SMS.AppSecret = v
 	}
 	absolute, err := filepath.Abs(path)
 	if err != nil {
@@ -81,12 +67,6 @@ func LoadConfig(path string) (Config, error) {
 	}
 	if (c.TLSCert == "") != (c.TLSKey == "") {
 		return c, errors.New("HTTPS 证书与私钥必须同时配置")
-	}
-	if c.SMS.BaseURL == "" {
-		c.SMS.BaseURL = "https://sms.gmwang.com.cn/api/v1"
-	}
-	if smsURL, err := url.Parse(c.SMS.BaseURL); err != nil || smsURL.Scheme != "https" || smsURL.Host == "" || smsURL.User != nil {
-		return c, errors.New("短信平台地址必须使用 HTTPS 且不能包含登录凭证")
 	}
 	if c.StorageRoot == "" && c.LegacyRoot != "" {
 		if filepath.Clean(c.LegacyRoot) == filepath.VolumeName(c.LegacyRoot)+string(filepath.Separator) {

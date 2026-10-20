@@ -153,7 +153,7 @@ func (s *Server) prepareBatchDownload(w http.ResponseWriter, r *http.Request, u 
 			if !validName(v.Name) || strings.Contains(v.Name, ":") {
 				return nil, 0, "", bad("文件名不适合打包，请先重命名")
 			}
-			if v.ScanStatus != "clean" || v.SourceMissing {
+			if !s.scanAccess(v) {
 				return nil, 0, "", apiError{423, "选中文件尚未通过安全检查或源文件不可用"}
 			}
 			if v.Size < 0 || v.Size > folderMaxBytes-total {

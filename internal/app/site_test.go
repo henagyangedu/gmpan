@@ -106,7 +106,13 @@ func TestIntegrationPendingDirectoryConfiguration(t *testing.T) {
 	}
 }
 func TestIntegrationSMSAdministration(t *testing.T) {
+	t.Setenv("GMPAN_SMS_KEY", "legacy-key")
+	t.Setenv("GMPAN_SMS_SECRET", "legacy-secret")
 	s, c := testServer(t)
+	if s.smsEnabled() || s.smsSettings.AppKey != "" || s.smsSettings.AppSecret != "" {
+		t.Fatal("fresh installation must leave SMS disabled without credentials")
+	}
+	expectStatus(t, call(t, s, testClient{}, "POST", "/api/auth/sms/send", map[string]string{"mobile": "13800000000"}), 503)
 	sent := 0
 	provider := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		sent++

@@ -9,17 +9,21 @@ import (
 	"unicode/utf8"
 )
 
+type SMSConfig struct {
+	BaseURL    string `json:"base_url"`
+	AppKey     string `json:"app_key"`
+	AppSecret  string `json:"app_secret"`
+	LoginScene string `json:"login_scene"`
+}
+
 type SMSSettings struct {
 	SMSConfig
 	Enabled  bool  `json:"enabled"`
 	Revision int64 `json:"revision"`
 }
 
-func loadSMSSettings(db *sql.DB, c Config) (SMSSettings, error) {
-	v := SMSSettings{SMSConfig: c.SMS, Enabled: c.SMS.AppKey != "" && c.SMS.AppSecret != "" && c.SMS.LoginScene != "", Revision: 1}
-	if v.BaseURL == "" {
-		v.BaseURL = "https://sms.gmwang.com.cn/api/v1"
-	}
+func loadSMSSettings(db *sql.DB) (SMSSettings, error) {
+	v := SMSSettings{SMSConfig: SMSConfig{BaseURL: "https://sms.gmwang.com.cn/api/v1"}, Revision: 1}
 	b, _ := json.Marshal(v)
 	if _, e := db.Exec("INSERT IGNORE INTO sms_settings(id,settings) VALUES(1,?)", b); e != nil {
 		return v, e
@@ -38,8 +42,7 @@ func (s *Server) smsSnapshot() (SMSConfig, bool) {
 	s.smsMu.RLock()
 	defer s.smsMu.RUnlock()
 	if s.smsSettings.Revision == 0 {
-		c := s.Config.SMS
-		return c, c.AppKey != "" && c.AppSecret != "" && c.LoginScene != ""
+		return SMSConfig{}, false
 	}
 	v := s.smsSettings
 	return v.SMSConfig, v.Enabled && v.AppKey != "" && v.AppSecret != "" && v.LoginScene != ""

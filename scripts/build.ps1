@@ -20,6 +20,8 @@ try {
     if ($LASTEXITCODE -ne 0) { throw '后端测试失败' }
     & $taskGoPath build -trimpath -ldflags='-s -w' -o (Join-Path $taskOutput 'gmpan.exe') ./cmd/gmpan
     if ($LASTEXITCODE -ne 0) { throw '后端构建失败' }
+    & $taskGoPath build -trimpath -ldflags='-s -w -H windowsgui' -o (Join-Path $taskOutput 'GmPan安装向导.exe') ./cmd/gmpan-setup
+    if ($LASTEXITCODE -ne 0) { throw '图形安装向导构建失败' }
 } finally { Pop-Location }
 Copy-Item -LiteralPath (Join-Path $taskRoot 'config.example.json') -Destination $taskOutput -Force
 Copy-Item -LiteralPath (Join-Path $taskRoot 'scripts\start.ps1') -Destination $taskOutput -Force
@@ -31,7 +33,10 @@ Copy-Item -LiteralPath (Join-Path $taskRoot 'docs\公司文件资源管理系统
 Copy-Item -LiteralPath (Join-Path $taskRoot 'docs\images') -Destination $taskOutput -Recurse -Force
 Copy-Item -LiteralPath (Join-Path $taskRoot 'LICENSE') -Destination $taskOutput -Force
 Copy-Item -LiteralPath (Join-Path $taskRoot 'SPONSORSHIP.md') -Destination $taskOutput -Force
+Copy-Item -LiteralPath (Join-Path $taskRoot 'docs\图形部署测试说明.md') -Destination $taskOutput -Force
+Copy-Item -LiteralPath (Join-Path $taskRoot 'THIRD-PARTY-NOTICES.md') -Destination $taskOutput -Force
 $taskDigest = Get-FileHash -LiteralPath (Join-Path $taskOutput 'gmpan.exe') -Algorithm SHA256
-($taskDigest.Hash + '  gmpan.exe') | Set-Content -LiteralPath (Join-Path $taskOutput 'SHA256SUMS.txt') -Encoding ascii
+$taskSetupDigest = Get-FileHash -LiteralPath (Join-Path $taskOutput 'GmPan安装向导.exe') -Algorithm SHA256
+@(($taskDigest.Hash + '  gmpan.exe'), ($taskSetupDigest.Hash + '  GmPan安装向导.exe')) | Set-Content -LiteralPath (Join-Path $taskOutput 'SHA256SUMS.txt') -Encoding utf8
 $taskDigest | Select-Object Algorithm,Hash,Path
 Write-Output ('部署目录：' + $taskOutput)
