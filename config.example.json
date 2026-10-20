@@ -1,0 +1,19 @@
+{
+  "listen": "127.0.0.1:18080",
+  "mysql_dsn": "gmpan:CHANGE_ME@tcp(127.0.0.1:3306)/gmpan?charset=utf8mb4&parseTime=true&loc=Local",
+  "storage_root": "D:/GmPanFiles",
+  "log_dir": "./logs",
+  "company_name": "感梦科技",
+  "tls_cert": "",
+  "tls_key": "",
+  "max_file_bytes": 10737418240,
+  "personal_quota_bytes": 21474836480,
+  "clamscan_path": "",
+  "clam_database_dir": "",
+  "sms": {
+    "base_url": "https://sms.gmwang.com.cn/api/v1",
+    "app_key": "",
+    "app_secret": "",
+    "login_scene": ""
+  }
+}
