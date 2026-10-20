@@ -1,4 +1,4 @@
-param([string]$Config = (Join-Path $PSScriptRoot 'config.json'))
+﻿param([string]$Config = (Join-Path $PSScriptRoot 'config.json'))
 $ErrorActionPreference = 'Stop'
 $taskIdentity = [Security.Principal.WindowsIdentity]::GetCurrent()
 $taskPrincipal = [Security.Principal.WindowsPrincipal]::new($taskIdentity)

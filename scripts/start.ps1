@@ -1,4 +1,4 @@
-param([string]$Config = (Join-Path $PSScriptRoot 'config.json'))
+﻿param([string]$Config = (Join-Path $PSScriptRoot 'config.json'))
 $ErrorActionPreference = 'Stop'
 $taskExecutable = Join-Path $PSScriptRoot 'gmpan.exe'
 if (!(Test-Path -LiteralPath $taskExecutable)) { throw '请在构建后的部署目录运行此脚本' }

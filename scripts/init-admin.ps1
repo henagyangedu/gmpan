@@ -1,4 +1,4 @@
-param([string]$Username = 'admin', [string]$Config = (Join-Path $PSScriptRoot 'config.json'))
+﻿param([string]$Username = 'admin', [string]$Config = (Join-Path $PSScriptRoot 'config.json'))
 $ErrorActionPreference = 'Stop'
 $taskPassword = Read-Host '请输入首个管理员初始密码（10～72 字节）' -AsSecureString
 $taskBstr = [Runtime.InteropServices.Marshal]::SecureStringToBSTR($taskPassword)

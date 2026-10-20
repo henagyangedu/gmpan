@@ -1,4 +1,4 @@
-param([string]$OutputDirectory = '')
+﻿param([string]$OutputDirectory = '')
 $ErrorActionPreference = 'Stop'
 $taskRoot = Split-Path -Parent $PSScriptRoot
 if (!$OutputDirectory) { $OutputDirectory = Join-Path $taskRoot 'release\GmPan' }
@@ -26,7 +26,11 @@ Copy-Item -LiteralPath (Join-Path $taskRoot 'scripts\start.ps1') -Destination $t
 Copy-Item -LiteralPath (Join-Path $taskRoot 'scripts\install-service.ps1') -Destination $taskOutput -Force
 Copy-Item -LiteralPath (Join-Path $taskRoot 'scripts\init-admin.ps1') -Destination $taskOutput -Force
 Copy-Item -LiteralPath (Join-Path $taskRoot 'docs\系统部署操作手册.md') -Destination $taskOutput -Force
+Copy-Item -LiteralPath (Join-Path $taskRoot 'docs\用户操作手册.md') -Destination $taskOutput -Force
 Copy-Item -LiteralPath (Join-Path $taskRoot 'docs\公司文件资源管理系统需求.md') -Destination $taskOutput -Force
+Copy-Item -LiteralPath (Join-Path $taskRoot 'docs\images') -Destination $taskOutput -Recurse -Force
+Copy-Item -LiteralPath (Join-Path $taskRoot 'LICENSE') -Destination $taskOutput -Force
+Copy-Item -LiteralPath (Join-Path $taskRoot 'SPONSORSHIP.md') -Destination $taskOutput -Force
 $taskDigest = Get-FileHash -LiteralPath (Join-Path $taskOutput 'gmpan.exe') -Algorithm SHA256
 ($taskDigest.Hash + '  gmpan.exe') | Set-Content -LiteralPath (Join-Path $taskOutput 'SHA256SUMS.txt') -Encoding ascii
 $taskDigest | Select-Object Algorithm,Hash,Path
