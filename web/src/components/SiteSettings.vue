@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onMounted, ref } from 'vue'
+import { computed, onMounted, onUnmounted, ref } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { OfficeBuilding, UploadFilled, Refresh, Check } from '@element-plus/icons-vue'
 import ScanSettings from './ScanSettings.vue'
@@ -19,9 +19,16 @@ function siteSnapshot(){const {revision,listen_port,...fields}=site.value;return
 const dirty=computed(()=>siteSnapshot()!==savedSite.value)
 const sms = ref({ enabled: false, base_url: '', login_scene: '', has_app_key: false, has_app_secret: false, revision: 0 })
 const credentials = ref({ app_key: '', app_secret: '', clear_credentials: false })
+const savedSMS = ref(''), smsTesting = ref(false), testMobile = ref(''), testCooldown = ref(0), testError = ref('')
+const testResult = ref<{accepted:boolean;message:string;mobile_masked:string;platform_code?:number;http_status?:number}>()
+let testTimer: ReturnType<typeof setInterval> | undefined
+function smsSnapshot() { return JSON.stringify({enabled:sms.value.enabled,base_url:sms.value.base_url,login_scene:sms.value.login_scene}) }
+const smsDirty = computed(() => smsSnapshot() !== savedSMS.value || !!credentials.value.app_key || !!credentials.value.app_secret || credentials.value.clear_credentials)
+const smsTestConfigured = computed(() => sms.value.has_app_key && sms.value.has_app_secret && !!sms.value.base_url && !!sms.value.login_scene)
+function applySMS(value:typeof sms.value) { sms.value=value; savedSMS.value=smsSnapshot(); credentials.value={app_key:'',app_secret:'',clear_credentials:false}; testResult.value=undefined; testError.value='' }
 const themes = [{ id: 'explorer', name: '目录工作台', note: 'A · 电脑目录与紧凑列表' }, { id: 'library', name: '影像资料库', note: 'B · 视频卡片与资源浏览' }, { id: 'classic', name: '清爽协作', note: '原有绿色工作空间' }]
 function error(e: any) { ElMessage.error(e.message || '操作未完成') }
-async function load() { loading.value = true; try { const [s, m] = await Promise.all([props.api('/admin/site-settings'), props.api('/admin/sms-settings')]); site.value = s.settings; runtime.value = s;savedSite.value=siteSnapshot(); sms.value = m; credentials.value = { app_key: '', app_secret: '', clear_credentials: false } } catch (e) { error(e) } finally { loading.value = false } }
+async function load() { loading.value = true; try { const [s, m] = await Promise.all([props.api('/admin/site-settings'), props.api('/admin/sms-settings')]); site.value = s.settings; runtime.value = s;savedSite.value=siteSnapshot(); applySMS(m) } catch (e) { error(e) } finally { loading.value = false } }
 async function save() { saving.value = true; try { const result = await props.api('/admin/site-settings', 'PUT', site.value); site.value = result.settings; runtime.value = result;savedSite.value=siteSnapshot(); emit('updated'); ElMessage.success(result.restart_required ? '站点配置已保存，重启站点后生效' : '站点配置已生效');if(directoryChanged.value)ElMessage.warning(rescanNotice) } catch (e) { error(e) } finally { saving.value = false } }
 async function browse(path=''){directoryLoading.value=true;try{directories.value=await props.api('/admin/directories?path='+encodeURIComponent(path));directoryInput.value=directories.value.path}catch(e){error(e)}finally{directoryLoading.value=false}}
 async function chooseDirectory(){directoryDialog.value=true;await browse(site.value.storage_root || runtime.value.active_storage_root)}
@@ -48,8 +55,22 @@ async function restart(){
 }
 async function changeLogo(event: Event) { const input = event.target as HTMLInputElement, file = input.files?.[0]; input.value = ''; if (!file) return; if (!['image/png', 'image/jpeg'].includes(file.type) || file.size > 2 * 1024 * 1024) { ElMessage.warning('请选择 2 MB 以内的 PNG 或 JPEG 图片'); return }; logoBusy.value = true; try { const result = await props.api('/admin/site-logo', 'PUT', file); site.value.revision = result.settings.revision; runtime.value = result; emit('updated'); ElMessage.success('公司 Logo 已更新') } catch (e) { error(e) } finally { logoBusy.value = false } }
 async function removeLogo() { logoBusy.value = true; try { const result = await props.api('/admin/site-logo', 'DELETE'); site.value.revision = result.settings.revision; runtime.value = result; emit('updated'); ElMessage.success('已恢复默认图标') } catch (e) { error(e) } finally { logoBusy.value = false } }
-async function saveSMS() { smsSaving.value = true; try { const { has_app_key, has_app_secret, ...fields } = sms.value; sms.value = await props.api('/admin/sms-settings', 'PUT', { ...fields, ...credentials.value }); credentials.value = { app_key: '', app_secret: '', clear_credentials: false }; emit('updated'); ElMessage.success('短信配置已生效') } catch (e) { error(e) } finally { smsSaving.value = false } }
+async function saveSMS() { if(smsTesting.value)return; smsSaving.value = true; try { const { has_app_key, has_app_secret, ...fields } = sms.value; applySMS(await props.api('/admin/sms-settings', 'PUT', { ...fields, ...credentials.value })); emit('updated'); ElMessage.success('短信配置已生效') } catch (e) { error(e) } finally { smsSaving.value = false } }
+async function testSMS() {
+  if(smsTesting.value || smsSaving.value || testCooldown.value)return
+  testResult.value=undefined;testError.value=''
+  if(smsDirty.value){testError.value='短信配置有未保存的修改，请先保存再测试。';return}
+  if(!/^1[3-9]\d{9}$/.test(testMobile.value)){testError.value='请输入有效的测试手机号';return}
+  smsTesting.value=true
+  try{
+    const result=await props.api('/admin/sms-test','POST',{mobile:testMobile.value,revision:sms.value.revision})
+    testResult.value=result;testCooldown.value=result.cooldown_seconds || 60
+    if(testTimer)clearInterval(testTimer)
+    testTimer=setInterval(()=>{testCooldown.value=Math.max(0,testCooldown.value-1);if(!testCooldown.value){clearInterval(testTimer);testTimer=undefined}},1000)
+  }catch(e:any){testError.value=e.message || '测试请求结果未确认，请先检查手机及平台发送记录，不要连续重发。'}finally{smsTesting.value=false}
+}
 onMounted(load)
+onUnmounted(()=>{if(testTimer)clearInterval(testTimer)})
 </script>
 <template>
   <section v-loading="loading" class="site-settings files-panel">
@@ -73,12 +94,23 @@ onMounted(load)
     </el-form>
     <div v-if="tab==='site'" class="settings-actions"><el-button type="warning" :loading="restarting" :disabled="!runtime.can_restart || dirty || saving" @click="restart">重启站点</el-button><span v-if="dirty" class="subtle">有未保存的修改，请先保存或重新加载。</span><span v-else-if="!runtime.can_restart" class="subtle">当前服务程序尚未启用重启功能，请更新服务程序。</span></div>
     <el-alert v-if="restarting || restartURL" type="info" :closable="false" title="站点重启与重新连接"><p>{{ restarting ? '正在等待站点恢复，成功后将自动跳转。' : '可点击下方地址重新访问。' }}</p><a v-if="restartURL" :href="restartURL">{{ restartURL }}</a></el-alert>
-    <el-form v-if="tab==='sms'" label-position="top" class="settings-form" @submit.prevent="saveSMS"><h3>短信登录</h3><el-form-item label="启用短信验证码登录"><el-switch v-model="sms.enabled" active-text="启用" inactive-text="关闭"/></el-form-item><el-form-item label="短信平台接口基址"><el-input v-model="sms.base_url" placeholder="https://sms.gmwang.com.cn/api/v1"/></el-form-item><div class="form-two"><el-form-item label="AppKey"><el-input v-model="credentials.app_key" type="password" show-password autocomplete="new-password" :placeholder="sms.has_app_key ? '已配置，留空保留原值' : '填写平台分配的 AppKey'"/></el-form-item><el-form-item label="AppSecret"><el-input v-model="credentials.app_secret" type="password" show-password autocomplete="new-password" :placeholder="sms.has_app_secret ? '已配置，留空保留原值' : '填写平台分配的 AppSecret'"/></el-form-item></div><el-form-item label="登录验证码场景"><el-input v-model="sms.login_scene" maxlength="64" placeholder="填写短信平台已开通的场景标识"/></el-form-item><el-checkbox v-model="credentials.clear_credentials">清除已保存的 AppKey 和 AppSecret（需关闭短信登录）</el-checkbox><p class="settings-note">凭证仅保存在服务端，保存后不回显。请使用独立项目凭证，并在短信平台配置场景、模板、额度与出口 IP 白名单。保存配置不会发送短信。</p><p class="subtle">关闭短信登录后，员工仍可使用用户名或绑定手机号加密码登录。</p><div class="settings-actions"><el-button type="primary" native-type="submit" :loading="smsSaving">保存短信配置</el-button></div></el-form>
+    <el-form v-if="tab==='sms'" label-position="top" class="settings-form" @submit.prevent="saveSMS"><h3>短信登录</h3><el-form-item label="启用短信验证码登录"><el-switch v-model="sms.enabled" active-text="启用" inactive-text="关闭"/></el-form-item><el-form-item label="短信平台接口基址"><el-input v-model="sms.base_url" placeholder="https://sms.gmwang.com.cn/api/v1"/></el-form-item><div class="form-two"><el-form-item label="AppKey"><el-input v-model="credentials.app_key" type="password" show-password autocomplete="new-password" :placeholder="sms.has_app_key ? '已配置，留空保留原值' : '填写平台分配的 AppKey'"/></el-form-item><el-form-item label="AppSecret"><el-input v-model="credentials.app_secret" type="password" show-password autocomplete="new-password" :placeholder="sms.has_app_secret ? '已配置，留空保留原值' : '填写平台分配的 AppSecret'"/></el-form-item></div><el-form-item label="登录验证码场景"><el-input v-model="sms.login_scene" maxlength="64" placeholder="填写短信平台已开通的场景标识"/></el-form-item><el-checkbox v-model="credentials.clear_credentials">清除已保存的 AppKey 和 AppSecret（需关闭短信登录）</el-checkbox><p class="settings-note">凭证仅保存在服务端，保存后不回显。请使用独立项目凭证，并在短信平台配置场景、模板、额度与出口 IP 白名单。保存配置不会发送短信。</p><p class="subtle">关闭短信登录后，员工仍可使用用户名或绑定手机号加密码登录。</p><div class="settings-actions"><el-button type="primary" native-type="submit" :loading="smsSaving" :disabled="smsTesting">保存短信配置</el-button></div></el-form>
+    <el-form v-if="tab==='sms'" label-position="top" class="settings-form sms-test-panel" @submit.prevent="testSMS">
+      <h3>发送测试验证码</h3>
+      <p class="settings-note">使用已保存的配置和登录验证码场景，向下方手机号发送 1 条真实验证码短信，可能消耗平台额度。测试手机号不必绑定员工；测试不会创建账号或登录。可在开启员工短信登录前先测试。</p>
+      <el-alert v-if="smsDirty" title="短信配置有未保存的修改，请先保存再测试。" type="info" :closable="false"/>
+      <el-alert v-else-if="!smsTestConfigured" title="请先保存接口基址、AppKey、AppSecret 和登录验证码场景。" type="info" :closable="false"/>
+      <div class="sms-test-actions"><el-form-item label="测试手机号"><el-input v-model="testMobile" maxlength="11" inputmode="tel" autocomplete="off" placeholder="输入接收测试验证码的手机号" :disabled="smsTesting"/></el-form-item><el-button type="primary" native-type="submit" :loading="smsTesting" :disabled="smsDirty || !smsTestConfigured || smsSaving || loading || testCooldown>0">{{ testCooldown ? testCooldown+' 秒后可重试' : '发送测试验证码' }}</el-button></div>
+      <el-alert v-if="testError" :title="testError" type="error" :closable="false" show-icon/>
+      <el-alert v-if="testResult" :title="testResult.accepted?'平台已受理':'测试发送未成功'" :type="testResult.accepted?'success':'error'" :closable="false" show-icon><p>{{testResult.message}}</p><p>接收号码：{{testResult.mobile_masked}}<template v-if="testResult.platform_code!==undefined">；平台返回码：{{testResult.platform_code}}</template><template v-if="testResult.http_status">；HTTP 状态：{{testResult.http_status}}</template></p></el-alert>
+      <p class="subtle">同一手机号与登录验证码共用 60 秒冷却；每位管理员每 10 分钟最多测试 5 次。请求超时不自动重发。测试失败时请按返回码检查配置；平台受理成功不代表手机已送达。</p>
+    </el-form>
   </section>
   <el-dialog v-model="directoryDialog" title="选择服务器文件目录" width="min(660px, 94vw)"><p class="subtle">浏览部署服务器的目录。只有空站点能直接变更；已有文件或索引时需停服迁移。</p><div class="directory-toolbar"><el-input v-model="directoryInput" placeholder="输入服务器完整路径后点击浏览" @keyup.enter="browse(directoryInput)"/><el-button :loading="directoryLoading" @click="browse(directoryInput)">浏览</el-button></div><div class="directory-toolbar"><el-button @click="browse('')">服务器磁盘</el-button><el-button :disabled="!directories.path" @click="browse(directories.parent)">上一级</el-button><span class="subtle">{{ directories.path || '选择磁盘' }}</span></div><el-table v-loading="directoryLoading" :data="directories.items" max-height="330" empty-text="没有可浏览的子目录" @row-dblclick="(row:any)=>browse(row.path)"><el-table-column prop="name" label="目录名称"/><el-table-column width="90"><template #default="{row}"><el-button link type="primary" @click="browse(row.path)">进入</el-button></template></el-table-column></el-table><p v-if="directories.truncated" class="subtle">目录内容较多，仅显示部分子目录；可输入完整路径后浏览。</p><el-alert v-if="!directories.selectable && directories.path" title="当前目录不能作为文件根目录，请进入独立的资料文件夹。" type="info" :closable="false"/><template #footer><el-button @click="directoryDialog=false">取消</el-button><el-button type="primary" :disabled="!directories.selectable || directoryLoading" @click="selectDirectory">选择当前目录</el-button></template></el-dialog>
   <el-dialog v-model="portDialog" title="修改监听端口" width="min(460px, 94vw)"><el-form label-position="top" @submit.prevent="savePort"><el-form-item label="新监听端口"><el-input-number v-model="port" :min="1" :max="65535" :precision="0"/><el-button text @click="port=defaultWebsitePort">使用默认端口 {{defaultWebsitePort}}</el-button></el-form-item><p class="subtle">当前协议默认使用 {{defaultWebsitePort}} 端口，默认端口的网址无需填写端口号；只有端口冲突时才需更换。修改端口不会切换 HTTP/HTTPS，保存后需重启站点，并确认防火墙允许新端口。</p><el-button type="primary" native-type="submit" :loading="portSaving">保存端口</el-button></el-form></el-dialog>
 </template>
 
 <style scoped>
+.sms-test-panel{border-top:1px solid var(--gp-line);margin-top:8px}.sms-test-actions{display:flex;align-items:center;gap:14px;flex-wrap:wrap;margin-top:18px;max-width:640px}.sms-test-actions .el-form-item{flex:1;min-width:220px}.sms-test-panel .el-alert p{margin:5px 0;overflow-wrap:anywhere}
 .directory-toolbar{display:flex;gap:10px;align-items:center;margin:14px 0;overflow-wrap:anywhere}.directory-toolbar .el-input{flex:1}.settings-actions{flex-wrap:wrap;gap:12px}.site-settings>.el-alert{margin-top:16px}
 </style>

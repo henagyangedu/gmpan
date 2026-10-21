@@ -3,8 +3,10 @@ package app
 import (
 	"database/sql"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/url"
+	"strconv"
 	"strings"
 	"unicode/utf8"
 )
@@ -116,5 +118,67 @@ func (s *Server) saveSMSSettings(w http.ResponseWriter, r *http.Request, u *User
 	s.smsSettings = v
 	s.audit(u.ID, "sms_settings_update", "sms", "ok")
 	writeJSON(w, 200, s.smsSettingsResponse())
+	return nil
+}
+
+func (s *Server) testSMSSettings(w http.ResponseWriter, r *http.Request, u *User) error {
+	if err := superAdmin(u); err != nil {
+		return err
+	}
+	var p struct {
+		Mobile   string `json:"mobile"`
+		Revision int64  `json:"revision"`
+	}
+	if err := decode(w, r, &p); err != nil {
+		return err
+	}
+	if !mobilePattern.MatchString(p.Mobile) {
+		return bad("请输入有效的测试手机号")
+	}
+	s.smsMu.RLock()
+	settings := s.smsSettings
+	s.smsMu.RUnlock()
+	if p.Revision != settings.Revision {
+		return conflict("短信配置已更新，请重新加载、核对并保存后再测试")
+	}
+	if settings.BaseURL == "" || settings.AppKey == "" || settings.AppSecret == "" || settings.LoginScene == "" {
+		return bad("请先保存完整的短信接口基址、AppKey、AppSecret 和登录验证码场景")
+	}
+	blocked, err := s.limited(u.ID, ipKey(r), "sms_test", 5, 20)
+	if err != nil {
+		return err
+	}
+	if blocked {
+		return apiError{429, "测试发送过于频繁，同一管理员每 10 分钟最多测试 5 次，请稍后再试"}
+	}
+	if err := s.reserveSMSCooldown(p.Mobile); err != nil {
+		return err
+	}
+	if _, err := s.DB.Exec("INSERT INTO auth_attempts(subject_hash,ip_hash,purpose) VALUES(?,?,'sms_test')", digest(u.ID), ipKey(r)); err != nil {
+		return err
+	}
+	masked := p.Mobile[:3] + "****" + p.Mobile[7:]
+	result := map[string]any{"accepted": true, "message": "平台已受理测试验证码，请检查手机是否收到。受理成功不代表已送达。", "mobile_masked": masked, "cooldown_seconds": 60, "config_revision": settings.Revision, "platform_code": 0, "http_status": 200}
+	auditResult := "accepted"
+	if err := s.smsRequestWith(settings.SMSConfig, "/verify-code/send", map[string]string{"scene": settings.LoginScene, "mobile": p.Mobile}); err != nil {
+		result["accepted"] = false
+		result["message"] = "测试发送未完成，请核对已保存的短信配置。不要连续重发。"
+		delete(result, "platform_code")
+		delete(result, "http_status")
+		auditResult = "request_failed"
+		var platformError *smsRequestError
+		if errors.As(err, &platformError) {
+			result["message"] = platformError.diagnostic()
+			if platformError.httpStatus != 0 {
+				result["http_status"] = platformError.httpStatus
+			}
+			if platformError.platformCode != nil {
+				result["platform_code"] = *platformError.platformCode
+				auditResult = "code_" + strconv.Itoa(*platformError.platformCode)
+			}
+		}
+	}
+	s.audit(u.ID, "sms_test", masked, auditResult)
+	writeJSON(w, 200, result)
 	return nil
 }

@@ -9,6 +9,7 @@ import (
 	"encoding/json"
 	"errors"
 	"io"
+	"net"
 	"net/http"
 	"strconv"
 	"strings"
@@ -46,7 +47,8 @@ func (s *Server) smsRequestWith(c SMSConfig, path string, payload any) error {
 	req.Header.Set("X-Gm-Sign", SMSSign(c.AppKey, c.AppSecret, ts, nonce, b))
 	resp, e := s.smsClient.Do(req)
 	if e != nil {
-		return apiError{502, "短信平台暂时不可用，请使用密码登录；请勿连续重试"}
+		var networkError net.Error
+		return &smsRequestError{public: apiError{502, "短信平台暂时不可用，请使用密码登录；请勿连续重试"}, timeout: errors.As(e, &networkError) && networkError.Timeout()}
 	}
 	defer resp.Body.Close()
 	var reply struct {
@@ -54,13 +56,13 @@ func (s *Server) smsRequestWith(c SMSConfig, path string, payload any) error {
 	}
 	e = json.NewDecoder(io.LimitReader(resp.Body, 1<<20)).Decode(&reply)
 	if resp.StatusCode != 200 || e != nil || reply.Code == nil {
-		return apiError{502, "短信平台返回异常，请稍后再试"}
+		return &smsRequestError{public: apiError{502, "短信平台返回异常，请稍后再试"}, httpStatus: resp.StatusCode, platformCode: reply.Code}
 	}
 	if *reply.Code != 0 {
 		if path == "/verify-code/check" {
 			return apiError{401, "验证码不正确、已使用或已过期"}
 		}
-		return apiError{502, "短信未能受理，请联系管理员检查平台配置或额度"}
+		return &smsRequestError{public: apiError{502, "短信未能受理，请联系管理员检查平台配置或额度"}, httpStatus: resp.StatusCode, platformCode: reply.Code}
 	}
 	return nil
 }
@@ -92,25 +94,7 @@ func (s *Server) sendSMS(w http.ResponseWriter, r *http.Request, _ *User) error 
 		return e
 	}
 	if id != "" {
-		tx, e := s.DB.Begin()
-		if e != nil {
-			return e
-		}
-		defer tx.Rollback()
-		if _, e = tx.Exec("INSERT IGNORE INTO sms_cooldowns(mobile,sent_at) VALUES(?,DATE_SUB(NOW(),INTERVAL 1 DAY))", p.Mobile); e != nil {
-			return e
-		}
-		var sent time.Time
-		if e = tx.QueryRow("SELECT sent_at FROM sms_cooldowns WHERE mobile=? FOR UPDATE", p.Mobile).Scan(&sent); e != nil {
-			return e
-		}
-		if time.Since(sent) < 60*time.Second {
-			return apiError{429, "请间隔 60 秒后再获取验证码"}
-		}
-		if _, e = tx.Exec("UPDATE sms_cooldowns SET sent_at=NOW() WHERE mobile=?", p.Mobile); e != nil {
-			return e
-		}
-		if e = tx.Commit(); e != nil {
+		if e = s.reserveSMSCooldown(p.Mobile); e != nil {
 			return e
 		}
 		if e = s.smsRequestWith(config, "/verify-code/send", map[string]string{"scene": config.LoginScene, "mobile": p.Mobile}); e != nil {
@@ -121,6 +105,28 @@ func (s *Server) sendSMS(w http.ResponseWriter, r *http.Request, _ *User) error 
 	}
 	writeJSON(w, 200, map[string]any{"message": "如手机号已绑定有效员工账号，验证码将发送至该手机", "cooldown_seconds": 60})
 	return nil
+}
+
+func (s *Server) reserveSMSCooldown(mobile string) error {
+	tx, err := s.DB.Begin()
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	if _, err = tx.Exec("INSERT IGNORE INTO sms_cooldowns(mobile,sent_at) VALUES(?,DATE_SUB(NOW(),INTERVAL 1 DAY))", mobile); err != nil {
+		return err
+	}
+	var sent time.Time
+	if err = tx.QueryRow("SELECT sent_at FROM sms_cooldowns WHERE mobile=? FOR UPDATE", mobile).Scan(&sent); err != nil {
+		return err
+	}
+	if time.Since(sent) < 60*time.Second {
+		return apiError{429, "请间隔 60 秒后再获取验证码"}
+	}
+	if _, err = tx.Exec("UPDATE sms_cooldowns SET sent_at=NOW() WHERE mobile=?", mobile); err != nil {
+		return err
+	}
+	return tx.Commit()
 }
 func (s *Server) smsLogin(w http.ResponseWriter, r *http.Request, _ *User) error {
 	config, enabled := s.smsSnapshot()

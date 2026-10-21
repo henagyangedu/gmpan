@@ -205,6 +205,7 @@ func (s *Server) routes() {
 	s.route("GET /api/admin/site-settings", true, s.getSiteSettings)
 	s.route("GET /api/admin/sms-settings", true, s.getSMSSettings)
 	s.route("PUT /api/admin/sms-settings", true, s.saveSMSSettings)
+	s.route("POST /api/admin/sms-test", true, s.testSMSSettings)
 	s.route("PUT /api/admin/site-settings", true, s.saveSiteSettings)
 	s.route("GET /api/admin/scan-settings", true, s.getScanSettings)
 	s.route("PUT /api/admin/scan-settings", true, s.saveScanSettings)
