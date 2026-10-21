@@ -10,12 +10,12 @@ import (
 )
 
 var ErrRecoveryAccount = errors.New("请选择仍处于启用状态的现有超管账号；不会创建账号或恢复已停用账号")
-var ErrRecoveryPassword = errors.New("新密码需为 10～72 字节，不能包含换行或空字符")
+var ErrRecoveryPassword = errors.New("新" + PasswordRequirement)
 
 // ResetAdminPassword is for the elevated local maintenance wizard only.
 // It must never be exposed as an unauthenticated site endpoint.
 func ResetAdminPassword(ctx context.Context, db *sql.DB, username, password string) error {
-	if !validPassword(password) || strings.ContainsAny(password, "\x00\r\n") {
+	if !ValidPassword(password) {
 		return ErrRecoveryPassword
 	}
 	hash, err := bcrypt.GenerateFromPassword([]byte(password), bcrypt.DefaultCost)

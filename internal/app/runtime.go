@@ -32,11 +32,9 @@ func (s *Server) checkPort(port int) error {
 	if active == strconv.Itoa(port) {
 		return nil
 	}
-	listener, err := net.Listen("tcp", net.JoinHostPort(host, strconv.Itoa(port)))
-	if err != nil {
+	if err := CheckListenAddress(net.JoinHostPort(host, strconv.Itoa(port))); err != nil {
 		return conflict("该端口已被占用或无法监听，请选择其他端口")
 	}
-	listener.Close()
 	return nil
 }
 

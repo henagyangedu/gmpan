@@ -118,7 +118,6 @@ func (s *Server) logout(w http.ResponseWriter, r *http.Request, u *User) error {
 	writeJSON(w, 200, map[string]bool{"ok": true})
 	return nil
 }
-func validPassword(p string) bool { return len(p) >= 10 && len(p) <= 72 }
 func (s *Server) changePassword(w http.ResponseWriter, r *http.Request, u *User) error {
 	var p struct {
 		Old string `json:"old_password"`
@@ -127,8 +126,8 @@ func (s *Server) changePassword(w http.ResponseWriter, r *http.Request, u *User)
 	if e := decode(w, r, &p); e != nil {
 		return e
 	}
-	if !validPassword(p.New) {
-		return bad("新密码需为 10～72 字节")
+	if !ValidPassword(p.New) {
+		return bad("新" + PasswordRequirement)
 	}
 	var hash string
 	if e := s.DB.QueryRow("SELECT password_hash FROM users WHERE id=?", u.ID).Scan(&hash); e != nil {
@@ -163,8 +162,8 @@ func CreateAdmin(db *sql.DB, username, password string, quota int64) error {
 	if !usernamePattern.MatchString(username) {
 		return bad("用户名需为字母开头的 3～32 位字母、数字或 _.-")
 	}
-	if !validPassword(password) {
-		return bad("密码需为 10～72 字节")
+	if !ValidPassword(password) {
+		return bad(PasswordRequirement)
 	}
 	var n int
 	if e := db.QueryRow("SELECT COUNT(*) FROM users").Scan(&n); e != nil {

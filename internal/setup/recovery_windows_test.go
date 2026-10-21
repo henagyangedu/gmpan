@@ -161,11 +161,18 @@ func TestRecoveryWizardExistingDatabase(t *testing.T) {
 		return result.Ticket
 	}
 	ticket := load()
-	p := map[string]any{"ticket": ticket, "username": "admin", "password": "RecoveredTest2026!", "confirm_password": "Mismatch2026!", "confirmed": true}
+	p := map[string]any{"ticket": ticket, "username": "admin", "password": "admin123", "confirm_password": "Mismatch2026!", "confirmed": true}
 	if out := recoveryPost(t, w, "recovery-reset", p); out.Code != 400 {
 		t.Fatal("mismatched passwords accepted")
 	}
 	p["confirm_password"] = p["password"]
+	for _, password := range []string{"abc1234", "abcdefgh", "12345678"} {
+		p["password"], p["confirm_password"] = password, password
+		if out := recoveryPost(t, w, "recovery-reset", p); out.Code != 400 {
+			t.Fatal("wizard accepted an invalid recovery password")
+		}
+	}
+	p["password"], p["confirm_password"] = "admin123", "admin123"
 	if err = os.WriteFile(configPath, append(configBytes, '\n'), 0600); err != nil {
 		t.Fatal(err)
 	}

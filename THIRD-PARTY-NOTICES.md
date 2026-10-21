@@ -19,3 +19,30 @@ MySQL 和 ClamAV 通过独立进程/本机连接运行，不会被改成 GmPan �
 ## 应用依赖
 
 Go 和前端依赖的准确版本以 `go.mod`、`go.sum`、`web/package-lock.json` 为准。核心依赖包括：Go 标准库（BSD 风格）、go-sql-driver/mysql（MPL-2.0）、golang.org/x/crypto、golang.org/x/sys（BSD 风格）、filippo.io/edwards25519（BSD-3-Clause）、Vue、Element Plus 及其图标（MIT）。再分发时一并保留相应上游版权与许可证。
+
+
+## 文件续传 SHA-256 兼容实现
+
+前端使用 [@noble/hashes](https://github.com/paulmillr/noble-hashes) 在内网 HTTP 缺少 Web Crypto 时本地计算文件校验值。确切版本见 web/package-lock.json；采用上游 MIT 许可证，原文保留如下。
+
+The MIT License (MIT)
+
+Copyright (c) 2022 Paul Miller (https://paulmillr.com)
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the “Software”), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in
+all copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED “AS IS”, WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
+THE SOFTWARE.

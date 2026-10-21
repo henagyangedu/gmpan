@@ -138,6 +138,9 @@ func siteHTTPServer(s *app.Server) *http.Server {
 }
 func runHTTP(ctx context.Context, server *http.Server, s *app.Server, c app.Config, logger *slog.Logger) error {
 	for {
+		if err := app.CheckListenAddress(c.Listen); err != nil {
+			return fmt.Errorf("网站端口已被占用或无法监听，请检查服务器端口: %w", err)
+		}
 		restart := make(chan struct{}, 1)
 		s.SetRestartHandler(func() {
 			select {

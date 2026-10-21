@@ -97,7 +97,7 @@ Set-Location D:\GmPan
 Copy-Item .\config.example.json .\config.json
 ```
 
-仅本机试用可监听 `127.0.0.1:18080`。员工通过内网访问时，需配置实际内网 IP 或域名及可信任的 HTTPS 证书。程序支持生成内网自签证书，但须先在客户端建立信任，详见[部署手册第四节](docs/系统部署操作手册.md)。
+仅本机试用可监听 `127.0.0.1:18080`。公司内网安装默认开启 HTTPS，使用 443；关闭 SSL / HTTPS 后使用 HTTP 的 80。向导会检测端口冲突，只有冲突时才需更换端口；正常情况下访问 `https://服务器IP/` 或 `http://服务器IP/`，无需填写端口号。HTTPS 需受信任的证书；HTTP 仅用于已确认可信的内网，由向导自动设置相关配置，手工部署规则见[部署手册第四节](docs/系统部署操作手册.md)。
 
 ```powershell
 .\gmpan.exe migrate -config .\config.json

@@ -161,8 +161,8 @@ func (s *Server) createUser(w http.ResponseWriter, r *http.Request, u *User) err
 	if u.Role != "admin" && p.Role == "admin" {
 		return forbidden()
 	}
-	if !validPassword(p.Password) {
-		return bad("初始密码需为 10～72 字节")
+	if !ValidPassword(p.Password) {
+		return bad("初始" + PasswordRequirement)
 	}
 	hash, e := bcrypt.GenerateFromPassword([]byte(p.Password), bcrypt.DefaultCost)
 	if e != nil {
@@ -195,8 +195,8 @@ func (s *Server) editUser(w http.ResponseWriter, r *http.Request, u *User) error
 	if id == u.ID && (!p.Enabled || p.Role != u.Role) {
 		return bad("不能停用自己或更改自己的管理员角色")
 	}
-	if p.Password != "" && !validPassword(p.Password) {
-		return bad("新密码需为 10～72 字节")
+	if p.Password != "" && !ValidPassword(p.Password) {
+		return bad("新" + PasswordRequirement)
 	}
 	hash := ""
 	if p.Password != "" {

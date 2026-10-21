@@ -67,15 +67,21 @@ func (w *Wizard) validate(p Request) error {
 	if strings.TrimSpace(p.Company) == "" || utf8.RuneCountInString(p.Company) > 100 || strings.ContainsAny(p.Company, "\x00\r\n") {
 		return errors.New("请填写 1～100 字的公司名称")
 	}
-	if !usernamePattern.MatchString(p.Admin) || len(p.Password) < 10 || len(p.Password) > 72 || strings.ContainsAny(p.Password, "\x00\r\n") {
-		return errors.New("超管用户名需以字母开头，共 3～32 位；密码需为 10～72 字节")
+	if !usernamePattern.MatchString(p.Admin) {
+		return errors.New("超管用户名需以字母开头，共 3～32 位")
+	}
+	if !app.ValidPassword(p.Password) {
+		return errors.New("超管" + app.PasswordRequirement)
 	}
 	ip := net.ParseIP(p.Host)
 	if ip == nil || ip.To4() == nil || (!ip.IsPrivate() && !ip.IsLoopback()) {
 		return errors.New("请选择本机 IPv4 内网地址或 127.0.0.1")
 	}
-	if p.Port < 1024 || p.Port > 65535 || p.DBPort < 1024 || p.DBPort > 65535 {
-		return errors.New("端口需为 1024～65535")
+	if p.Port < 1 || p.Port > 65535 {
+		return errors.New("网站端口需为 1～65535")
+	}
+	if p.DBPort < 1024 || p.DBPort > 65535 {
+		return errors.New("数据库端口需为 1024～65535")
 	}
 	if p.DBMode != "new" && p.DBMode != "existing" {
 		return errors.New("请选择数据库安装方式")
@@ -94,17 +100,13 @@ func (w *Wizard) validate(p Request) error {
 			return err
 		}
 	}
-	l, err := net.Listen("tcp4", net.JoinHostPort(p.Host, strconv.Itoa(p.Port)))
-	if err != nil {
+	if err := app.CheckListenAddress(net.JoinHostPort(p.Host, strconv.Itoa(p.Port))); err != nil {
 		return errors.New("网站端口已占用或所选 IP 不属于本机")
 	}
-	l.Close()
 	if p.DBMode == "new" {
-		l, err = net.Listen("tcp4", net.JoinHostPort("127.0.0.1", strconv.Itoa(p.DBPort)))
-		if err != nil {
+		if err := app.CheckListenAddress(net.JoinHostPort("127.0.0.1", strconv.Itoa(p.DBPort))); err != nil {
 			return errors.New("数据库端口已占用，请换一个端口")
 		}
-		l.Close()
 	}
 	if _, err := readManifest(w.Bundle); err != nil {
 		return err
@@ -287,7 +289,8 @@ func (w *Wizard) install(p Request) {
 		}
 	}
 	config := app.Config{Listen: net.JoinHostPort(p.Host, strconv.Itoa(p.Port)), DSN: dbConfig(p).FormatDSN(), StorageRoot: p.Storage, LogDir: filepath.Join(p.Directory, "logs"), CompanyName: p.Company, MaxFileBytes: 10 << 30, PersonalQuotaBytes: 20 << 30, ClamScanPath: filepath.Join(components, "clamav", "clamscan.exe"), ClamDatabaseDir: filepath.Join(components, "clamav", "database")}
-	if !net.ParseIP(p.Host).IsLoopback() {
+	config.AllowLANHTTP = p.PlainHTTP && !net.ParseIP(p.Host).IsLoopback()
+	if !net.ParseIP(p.Host).IsLoopback() && !p.PlainHTTP {
 		certDir := filepath.Join(p.Directory, "certs")
 		if err = runCommand(30*time.Second, filepath.Join(p.Directory, "gmpan.exe"), "certificate", "-host", p.Host+",127.0.0.1,localhost", "-out", certDir); err != nil {
 			fail("内网 HTTPS 证书生成失败")
@@ -386,7 +389,7 @@ func (w *Wizard) install(p Request) {
 		fail("安全检查未通过，请检查 ClamAV 程序和病毒库；未关闭或绕过安全检查")
 		return
 	}
-	w.step(70, "内网证书、文件目录和 ClamAV 实际扫描检查通过")
+	w.step(70, "访问配置、文件目录和 ClamAV 实际扫描检查通过")
 	if p.DBMode == "new" {
 		if err = limitRuntimeDB(p, rootPassword); err != nil {
 			fail("数据库运行账号权限收紧失败")
@@ -456,11 +459,7 @@ func (w *Wizard) install(p Request) {
 		fail(err.Error())
 		return
 	}
-	scheme := "http"
-	if config.TLSCert != "" {
-		scheme = "https"
-	}
-	url := scheme + "://" + config.Listen
+	url := installationURL(config)
 	if err = health(url, config.TLSCert); err != nil {
 		fail("站点健康检查失败，请查看应用日志")
 		return
@@ -609,6 +608,21 @@ func limitRuntimeDB(p Request, rootPassword string) error {
 	}
 	_, err = db.Exec("GRANT SELECT, INSERT, UPDATE, DELETE ON gmpan.* TO 'gmpan'@'127.0.0.1'")
 	return err
+}
+
+func installationURL(c app.Config) string {
+	scheme, address := "http", c.Listen
+	if c.TLSCert != "" {
+		scheme = "https"
+	}
+	host, port, err := net.SplitHostPort(address)
+	if err == nil && ((scheme == "http" && port == "80") || (scheme == "https" && port == "443")) {
+		address = host
+		if strings.Contains(host, ":") {
+			address = "[" + host + "]"
+		}
+	}
+	return scheme + "://" + address
 }
 
 func health(url, certPath string) error {

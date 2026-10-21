@@ -199,7 +199,11 @@ func (s *Server) siteResponse() map[string]any {
 	s.restartMu.RLock()
 	canRestart := s.restartFn != nil
 	s.restartMu.RUnlock()
-	return map[string]any{"settings": settings, "has_logo": len(s.siteLogo) > 0, "active_storage_root": s.Config.StorageRoot, "deployment_dir": deploymentDirectory(), "migration_required": s.Config.StorageRoot == "", "previous_data_dir": s.Config.DataDir, "previous_source_dir": s.Config.LegacyRoot, "restart_required": !sameDirectory(s.site.StorageRoot, s.Config.StorageRoot) || (s.site.ListenPort != 0 && s.site.ListenPort != currentPort), "active_listen": s.Config.Listen, "active_port": currentPort, "can_restart": canRestart, "instance_id": s.instanceID}
+	scheme := "http"
+	if s.Config.TLSCert != "" {
+		scheme = "https"
+	}
+	return map[string]any{"settings": settings, "has_logo": len(s.siteLogo) > 0, "active_storage_root": s.Config.StorageRoot, "deployment_dir": deploymentDirectory(), "migration_required": s.Config.StorageRoot == "", "previous_data_dir": s.Config.DataDir, "previous_source_dir": s.Config.LegacyRoot, "restart_required": !sameDirectory(s.site.StorageRoot, s.Config.StorageRoot) || (s.site.ListenPort != 0 && s.site.ListenPort != currentPort), "active_listen": s.Config.Listen, "active_port": currentPort, "active_scheme": scheme, "can_restart": canRestart, "instance_id": s.instanceID}
 }
 func (s *Server) getSiteSettings(w http.ResponseWriter, _ *http.Request, u *User) error {
 	if e := superAdmin(u); e != nil {

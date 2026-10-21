@@ -22,6 +22,7 @@ type Config struct {
 	CompanyName        string `json:"company_name"`
 	TLSCert            string `json:"tls_cert"`
 	TLSKey             string `json:"tls_key"`
+	AllowLANHTTP       bool   `json:"allow_lan_http"`
 	MaxFileBytes       int64  `json:"max_file_bytes"`
 	PersonalQuotaBytes int64  `json:"personal_quota_bytes"`
 	ClamScanPath       string `json:"clamscan_path"`
@@ -62,11 +63,13 @@ func LoadConfig(path string) (Config, error) {
 		return c, errors.New("listen 必须包含地址和端口")
 	}
 	ip := net.ParseIP(host)
-	if (ip == nil || !ip.IsLoopback()) && (c.TLSCert == "" || c.TLSKey == "") {
-		return c, errors.New("内网监听必须配置 HTTPS 证书；本机开发请使用 127.0.0.1")
-	}
 	if (c.TLSCert == "") != (c.TLSKey == "") {
 		return c, errors.New("HTTPS 证书与私钥必须同时配置")
+	}
+	if (ip == nil || !ip.IsLoopback()) && c.TLSCert == "" {
+		if !c.AllowLANHTTP || ip == nil || (!ip.IsPrivate() && !ip.IsUnspecified()) {
+			return c, errors.New("请配置 HTTPS 证书，或明确启用 allow_lan_http 用于内网 HTTP；本机开发可使用 127.0.0.1")
+		}
 	}
 	if c.StorageRoot == "" && c.LegacyRoot != "" {
 		if filepath.Clean(c.LegacyRoot) == filepath.VolumeName(c.LegacyRoot)+string(filepath.Separator) {

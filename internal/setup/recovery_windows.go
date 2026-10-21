@@ -14,7 +14,6 @@ import (
 	"os"
 	"path/filepath"
 	"strconv"
-	"strings"
 	"time"
 
 	"gmpan/internal/app"
@@ -125,7 +124,7 @@ func (w *Wizard) recoverPassword(out http.ResponseWriter, r *http.Request) {
 			reply(out, 400, map[string]string{"message": "请核对账号、确认重置，并输入两次相同的新密码"})
 			return
 		}
-		if len(p.Password) < 10 || len(p.Password) > 72 || strings.ContainsAny(p.Password, "\x00\r\n") {
+		if !app.ValidPassword(p.Password) {
 			reply(out, 400, map[string]string{"message": app.ErrRecoveryPassword.Error()})
 			return
 		}

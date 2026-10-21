@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { validPassword, passwordRequirement } from '../password'
 import { ref, watch } from 'vue'
 
 const props = defineProps<{ api: (path: string, data?: unknown) => Promise<any>; directory: string; elevated: boolean }>()
@@ -18,8 +19,7 @@ async function load() {
 }
 async function reset() {
   error.value = ''; success.value = ''
-  const size = new TextEncoder().encode(password.value).length
-  if (size < 10 || size > 72 || /[\x00\r\n]/.test(password.value)) { error.value = '新密码需为 10～72 字节，不能包含换行或空字符'; return }
+  if (!validPassword(password.value)) { error.value = '新' + passwordRequirement; return }
   if (password.value !== confirmPassword.value) { error.value = '两次输入的新密码不一致'; return }
   if (!site.value || !confirmed.value) return
   setBusy(true)
@@ -46,7 +46,7 @@ async function reset() {
         <div class="setup-result"><label>配置目录</label><span>{{ site.directory }}</span><label>数据库</label><span>{{ site.database }}</span></div>
         <el-form-item label="要恢复的超管账号"><el-select v-model="username" autocomplete="username"><el-option v-for="account in site.accounts" :key="account.username" :value="account.username" :label="account.username + ' · ' + account.name"/></el-select></el-form-item>
         <div class="setup-two">
-          <el-form-item label="新密码"><el-input v-model="password" name="recovery-new-password" type="password" show-password autocomplete="new-password" placeholder="10～72 字节，建议字母、数字和符号"/></el-form-item>
+          <el-form-item label="新密码"><el-input v-model="password" name="recovery-new-password" type="password" show-password autocomplete="new-password" placeholder="至少 8 位，包含字母和数字"/></el-form-item>
           <el-form-item label="再次输入新密码"><el-input v-model="confirmPassword" name="recovery-confirm-password" type="password" show-password autocomplete="new-password"/></el-form-item>
         </div>
         <p class="setup-hint">浏览器生成密码时，请确认两栏一致并妥善保存。恢复工具不会显示旧密码，也不会在结果或日志中记录新密码。</p>

@@ -89,6 +89,70 @@ func TestInstallerRejectsUnknownFields(t *testing.T) {
 	}
 }
 
+func TestInstallerWebsitePortRange(t *testing.T) {
+	if !elevated() {
+		t.Skip("installer validation requires a local Windows administrator")
+	}
+	t.Setenv("GMPAN_DSN", "")
+	base := t.TempDir()
+	w := New(filepath.Join(base, "bundle"))
+	p := Request{Directory: filepath.Join(base, "site"), Storage: filepath.Join(base, "files"), Company: "端口校验测试", Host: "127.0.0.1", DBMode: "new", DBPort: 13306, Admin: "admin", Password: "PortRangeTest2026!"}
+	for _, port := range []int{1, 80, 443, 1023, 1024, 65535} {
+		p.Port = port
+		// Subsequent checks may reject an occupied port, existing service or
+		// missing payload. None may reject a valid website port by its range.
+		if err := w.validate(p); err != nil && strings.Contains(err.Error(), "端口需为") {
+			t.Fatalf("valid website port %d rejected: %v", port, err)
+		}
+	}
+	for _, port := range []int{0, -1, 65536} {
+		p.Port = port
+		if err := w.validate(p); err == nil || err.Error() != "网站端口需为 1～65535" {
+			t.Fatalf("invalid website port %d accepted: %v", port, err)
+		}
+	}
+	p.Port, p.DBPort = 80, 1023
+	if err := w.validate(p); err == nil || err.Error() != "数据库端口需为 1024～65535" {
+		t.Fatalf("database port range changed unintentionally: %v", err)
+	}
+}
+
+func TestInstallerPasswordPolicy(t *testing.T) {
+	if !elevated() {
+		t.Skip("installer validation requires a local Windows administrator")
+	}
+	t.Setenv("GMPAN_DSN", "")
+	base := t.TempDir()
+	w := New(filepath.Join(base, "bundle"))
+	p := Request{Directory: filepath.Join(base, "site"), Storage: filepath.Join(base, "files"), Company: "密码规则测试", Host: "127.0.0.1", Port: freePort(18589), DBMode: "new", DBPort: freePort(23589), Admin: "admin"}
+	for _, password := range []string{"abc1234", "abcdefgh", "12345678"} {
+		p.Password = password
+		if err := w.validate(p); err == nil || err.Error() != "超管"+app.PasswordRequirement {
+			t.Fatal("installer accepted an invalid password or used an inconsistent rule")
+		}
+	}
+	p.Password = "abcd1234"
+	if err := w.validate(p); err != nil && strings.Contains(err.Error(), "密码") {
+		t.Fatal("installer rejected an eight-character alphanumeric password")
+	}
+}
+
+func TestInstallationDefaultURLs(t *testing.T) {
+	for _, item := range []struct{ listen, cert, want string }{
+		{"192.168.2.92:80", "", "http://192.168.2.92"},
+		{"192.168.2.92:443", "server.crt", "https://192.168.2.92"},
+		{"192.168.2.92:80", "server.crt", "https://192.168.2.92:80"},
+		{"192.168.2.92:443", "", "http://192.168.2.92:443"},
+		{"192.168.2.92:8080", "", "http://192.168.2.92:8080"},
+		{"192.168.2.92:8443", "server.crt", "https://192.168.2.92:8443"},
+		{"127.0.0.1:18080", "", "http://127.0.0.1:18080"},
+	} {
+		if got := installationURL(app.Config{Listen: item.listen, TLSCert: item.cert}); got != item.want {
+			t.Fatalf("URL %s != %s", got, item.want)
+		}
+	}
+}
+
 func TestInstallerFilePermissionsRemainReadable(t *testing.T) {
 	if !elevated() {
 		t.Skip("requires administrator ACL configuration")
@@ -138,7 +202,8 @@ func TestIntegrationWindowsInstallation(t *testing.T) {
 		}
 	}()
 	w := New(bundle)
-	p := Request{Directory: filepath.Join(base, "site"), Storage: filepath.Join(base, "files"), Company: "GmPan 部署测试", Host: "127.0.0.1", Port: freePort(18380), DBMode: "new", DBPort: freePort(13406), Admin: "setup_admin", Password: randomSecret()}
+	p := Request{Directory: filepath.Join(base, "site"), Storage: filepath.Join(base, "files"), Company: "GmPan 部署测试", Host: "127.0.0.1", Port: freePort(18380), DBMode: "new", DBPort: freePort(23406), Admin: "setup_admin", Password: randomSecret()}
+	p.PlainHTTP = os.Getenv("GMPAN_SETUP_TEST_PLAIN_HTTP") == "1"
 	if os.Getenv("GMPAN_SETUP_TEST_LAN") == "1" {
 		addresses, _ := net.InterfaceAddrs()
 		for _, address := range addresses {
@@ -149,7 +214,7 @@ func TestIntegrationWindowsInstallation(t *testing.T) {
 			}
 		}
 		if p.Host == "127.0.0.1" {
-			t.Fatal("no private IPv4 for HTTPS installation test")
+			t.Fatal("no private IPv4 for LAN installation test")
 		}
 		p.Firewall = true
 		defer firewall(p.Directory, p.Port, false)
@@ -180,6 +245,10 @@ func TestIntegrationWindowsInstallation(t *testing.T) {
 	if err = json.Unmarshal(c, &cfg); err != nil {
 		t.Fatal(err)
 	}
+	loaded, err := app.LoadConfig(filepath.Join(p.Directory, "config.json"))
+	if err != nil || (p.Host != "127.0.0.1" && p.PlainHTTP && (!loaded.AllowLANHTTP || loaded.TLSCert != "")) {
+		t.Fatal("installed HTTP preference was not retained")
+	}
 	db, err := app.OpenDB(app.Config{DSN: cfg.DSN})
 	if err != nil {
 		t.Fatal("runtime database account cannot connect")
@@ -207,7 +276,9 @@ func TestIntegrationWindowsInstallation(t *testing.T) {
 	db.Close()
 	certPath := ""
 	if p.Host != "127.0.0.1" {
-		certPath = filepath.Join(p.Directory, "certs", "server.crt")
+		if !p.PlainHTTP {
+			certPath = filepath.Join(p.Directory, "certs", "server.crt")
+		}
 		if err = runCommand(10*time.Second, "netsh.exe", "advfirewall", "firewall", "show", "rule", "name="+firewallName(p.Directory)); err != nil {
 			t.Fatal("LAN firewall rule was not created")
 		}
@@ -284,6 +355,9 @@ func checkInstalledSite(t *testing.T, url, user, password, certPath string) {
 	res.Body.Close()
 	if res.StatusCode != 200 || len(res.Cookies()) == 0 {
 		t.Fatalf("login status=%d", res.StatusCode)
+	}
+	if res.Cookies()[0].Secure != (certPath != "") {
+		t.Fatal("session cookie does not match the selected HTTP/HTTPS protocol")
 	}
 	var u struct {
 		CSRF string `json:"csrf"`

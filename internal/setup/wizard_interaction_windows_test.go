@@ -6,6 +6,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"fmt"
 	"net"
 	"net/http/httptest"
 	"net/url"
@@ -23,6 +24,40 @@ func setupRequest(w *Wizard, method, path string, body []byte) *httptest.Respons
 	out := httptest.NewRecorder()
 	w.Handler().ServeHTTP(out, r)
 	return out
+}
+
+func TestWizardPortAvailability(t *testing.T) {
+	w := New(t.TempDir())
+	w.Host = "127.0.0.1:18282"
+	listener, err := net.Listen("tcp4", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer listener.Close()
+	port := listener.Addr().(*net.TCPAddr).Port
+	path := fmt.Sprintf("/api/setup/check-port?host=127.0.0.1&port=%d", port)
+	check := func(available bool) {
+		t.Helper()
+		out := setupRequest(w, "GET", path, nil)
+		var result struct {
+			Available bool `json:"available"`
+		}
+		if json.Unmarshal(out.Body.Bytes(), &result) != nil || out.Code != 200 || result.Available != available {
+			t.Fatalf("port availability mismatch: %d %s", out.Code, out.Body.String())
+		}
+	}
+	check(false)
+	listener.Close()
+	check(true)
+	for _, query := range []string{"host=203.0.113.8&port=80", "host=127.0.0.1&port=0", "host=127.0.0.1&port=65536"} {
+		if out := setupRequest(w, "GET", "/api/setup/check-port?"+query, nil); out.Code != 400 {
+			t.Fatal("invalid port probe accepted")
+		}
+	}
+	w.checking = true
+	if out := setupRequest(w, "GET", path, nil); out.Code != 409 {
+		t.Fatal("port probe allowed during installation checks")
+	}
 }
 
 func TestWizardPageDirectoryPicker(t *testing.T) {

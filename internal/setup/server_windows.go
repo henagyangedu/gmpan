@@ -22,6 +22,7 @@ import (
 	"sync"
 	"time"
 
+	"gmpan/internal/app"
 	"gmpan/internal/webui"
 )
 
@@ -31,6 +32,7 @@ type Request struct {
 	Company    string `json:"company"`
 	Host       string `json:"host"`
 	Port       int    `json:"port"`
+	PlainHTTP  bool   `json:"plain_http"`
 	DBMode     string `json:"db_mode"`
 	DBHost     string `json:"db_host"`
 	DBPort     int    `json:"db_port"`
@@ -125,6 +127,27 @@ func (w *Wizard) api(out http.ResponseWriter, r *http.Request) {
 	switch r.Method + " " + r.URL.Path {
 	case "POST /api/setup/recovery-info", "POST /api/setup/recovery-reset":
 		w.recoverPassword(out, r)
+	case "GET /api/setup/check-port":
+		host := r.URL.Query().Get("host")
+		ip := net.ParseIP(host)
+		port, err := strconv.Atoi(r.URL.Query().Get("port"))
+		if err != nil || port < 1 || port > 65535 || ip == nil || ip.To4() == nil || (!ip.IsPrivate() && !ip.IsLoopback()) {
+			reply(out, 400, map[string]string{"message": "请选择本机内网 IPv4 地址和有效网站端口"})
+			return
+		}
+		w.mu.Lock()
+		busy := w.state.Running || w.state.Done || w.checking
+		w.mu.Unlock()
+		if busy {
+			reply(out, 409, map[string]string{"message": "当前操作正在进行，请完成后再检查端口"})
+			return
+		}
+		err = app.CheckListenAddress(net.JoinHostPort(host, strconv.Itoa(port)))
+		message := "端口可用，安装时还会再次检查"
+		if err != nil {
+			message = "该端口已被占用或无法监听，请选择备用端口，或由管理员检查占用程序"
+		}
+		reply(out, 200, map[string]any{"available": err == nil, "message": message})
 	case "GET /api/setup/uninstall-info":
 		services, err := inspectUninstallServices()
 		if err != nil {
@@ -244,9 +267,7 @@ func (w *Wizard) api(out http.ResponseWriter, r *http.Request) {
 
 func freePort(start int) int {
 	for port := start; port < start+100; port++ {
-		l, err := net.Listen("tcp4", net.JoinHostPort("127.0.0.1", strconv.Itoa(port)))
-		if err == nil {
-			l.Close()
+		if app.CheckListenAddress(net.JoinHostPort("127.0.0.1", strconv.Itoa(port))) == nil {
 			return port
 		}
 	}

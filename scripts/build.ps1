@@ -4,6 +4,7 @@ $taskRoot = Split-Path -Parent $PSScriptRoot
 if (!$OutputDirectory) { $OutputDirectory = Join-Path $taskRoot 'release\GmPan' }
 $taskOutput = [IO.Path]::GetFullPath($OutputDirectory)
 if ($taskOutput -eq [IO.Path]::GetPathRoot($taskOutput)) { throw '输出目录不能是磁盘根目录' }
+if (Test-Path -LiteralPath (Join-Path $taskOutput 'payload\manifest.json')) { throw '输出目录是完整部署包，不能只替换主程序，否则组件校验清单会失效。请用 package-setup.ps1 在新的输出目录构建完整包' }
 $taskGo = Get-Command go -ErrorAction SilentlyContinue
 if ($taskGo) { $taskGoPath = $taskGo.Source } elseif (Test-Path -LiteralPath 'C:\Program Files\Go\bin\go.exe') { $taskGoPath = 'C:\Program Files\Go\bin\go.exe' } else { throw '请先安装 Go 1.26 或更新版本' }
 Push-Location (Join-Path $taskRoot 'web')
