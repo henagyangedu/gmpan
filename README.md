@@ -6,17 +6,17 @@ GmPan 感梦企业网盘是支持私有化部署的内网文件管理与文件�
 
 ## 安装包与更新包下载
 
-当前版本 **v6.3**，适用于 Windows x64。部署电脑不需要安装 Go、Node.js。
+当前版本 **v6.4**，适用于 Windows x64。部署电脑不需要安装 Go、Node.js。
 
 | 使用场景 | 下载与操作 |
 | --- | --- |
-| 全新安装 | [GitHub 完整安装包](https://github.com/henagyangedu/gmpan/releases/download/v6.3/GmPan-Setup-v6.3.zip)，包含 MySQL 8.4 LTS、运行库及可选病毒检查组件；全部解压后，以管理员身份运行 `GmPan安装向导.exe`，按[图形部署说明](docs/图形部署测试说明.md)安装 |
-| 已部署站点更新 | [GitHub 轻量更新包](https://github.com/henagyangedu/gmpan/releases/download/v6.3/GmPan-Update-v6.3.zip)；停止 GmPan 服务，备份原程序，只替换 `gmpan.exe`，启动服务并按 Ctrl+F5 刷新浏览器，保留原配置、数据库和资料 |
+| 全新安装 | [GitHub 完整安装包](https://github.com/henagyangedu/gmpan/releases/download/v6.4/GmPan-Setup-v6.4.zip)，包含 MySQL 8.4 LTS、运行库及可选病毒检查组件；全部解压后，以管理员身份运行 `GmPan安装向导.exe`，按[图形部署说明](docs/图形部署测试说明.md)安装 |
+| 已部署站点更新 | [GitHub 轻量更新包](https://github.com/henagyangedu/gmpan/releases/download/v6.4/GmPan-Update-v6.4.zip)；停止 GmPan 服务，备份原程序，只替换 `gmpan.exe`，启动服务并按 Ctrl+F5 刷新浏览器，保留原配置、数据库和资料 |
 | Gitee 国内下载 | [Gitee 发行版](https://gitee.com/lyhcms/gmpan/releases)同时提供更新包及完整安装包分卷；下载全部 6 个 `.zip.001`～`.zip.006` 分卷和 `Merge-Setup.cmd` 到同一目录，双击合并工具，校验通过后得到完整 ZIP，再全部解压安装 |
 
 Gitee 单附件大小有限，完整安装包采用分卷提供；不要单独解压分卷。两边同时提供 SHA256 校验文件。不要将更新程序覆盖进旧的完整安装包，旧安装包的组件校验清单会失效。
 
-v6.3 新增 **超管后台 → 站点配置 → 短信配置 → 发送测试验证码**，可填写测试手机号，查看平台返回码与处理建议；测试使用已保存配置，可能消耗短信额度。登录继续使用平台验证码接口，短信平台需配置好验证码场景与模板关联。
+v6.4 新增 **超管后台 → 站点配置 → 短信配置 → 发送测试验证码**，可填写测试手机号，查看平台返回码与处理建议；测试使用已保存配置，可能消耗短信额度。使用模板接口 `/sms/send`，配置 AK、SK、`templateKey`（如 `standard_code`）。GmPan 生成并校验 6 位验证码，5 分钟有效、一次使用，错误 5 次失效；无需另配 scene。
 
 ## 文档导航
 

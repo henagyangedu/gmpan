@@ -30,7 +30,7 @@ func (e *smsRequestError) diagnostic() string {
 func smsCodeAdvice(code int) string {
 	switch code {
 	case 10001, 10002:
-		return "请求参数错误或缺失，请核对登录验证码场景标识及接口基址。"
+		return "请求参数错误或缺失，请核对模板标识 templateKey 及接口基址。"
 	case 20001:
 		return "签名校验失败，请核对 AppKey、AppSecret 是否正确且属于同一项目。"
 	case 20002:
@@ -46,11 +46,11 @@ func smsCodeAdvice(code int) string {
 	case 30001, 30002, 30003, 30004:
 		return "额度不足、达到日/月限额或缺少额度账本，请检查项目额度与限额。"
 	case 40001, 40002:
-		return "短信模板不存在或已停用，请检查登录场景关联的模板。"
+		return "短信模板不存在或已停用，请核对模板标识 templateKey 及模板启用状态。"
 	case 40003:
-		return "模板未授权给当前项目，请联系平台开通场景及模板授权。"
+		return "模板未授权给当前项目，请联系平台开通当前项目的模板授权。"
 	case 40004:
-		return "模板变量校验失败，请联系平台检查验证码场景与模板变量。"
+		return "模板变量校验失败，请联系平台检查模板变量 code。"
 	case 40005:
 		return "短信内容被平台拦截，请联系平台核对验证码模板。"
 	case 40006:
@@ -62,6 +62,6 @@ func smsCodeAdvice(code int) string {
 	case 50000, 50001:
 		return "短信平台系统繁忙，请稍后再试。"
 	default:
-		return "请在短信平台查询此返回码，核对项目、场景授权、模板、额度和出口 IP 白名单。"
+		return "请在短信平台查询此返回码，核对项目、模板授权、模板、额度和出口 IP 白名单。"
 	}
 }

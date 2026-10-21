@@ -25,10 +25,6 @@ func (s *Server) smsEnabled() bool {
 	_, enabled := s.smsSnapshot()
 	return enabled
 }
-func (s *Server) smsRequest(path string, payload any) error {
-	c, _ := s.smsSnapshot()
-	return s.smsRequestWith(c, path, payload)
-}
 func (s *Server) smsRequestWith(c SMSConfig, path string, payload any) error {
 	b, e := json.Marshal(payload)
 	if e != nil {
@@ -59,9 +55,6 @@ func (s *Server) smsRequestWith(c SMSConfig, path string, payload any) error {
 		return &smsRequestError{public: apiError{502, "短信平台返回异常，请稍后再试"}, httpStatus: resp.StatusCode, platformCode: reply.Code}
 	}
 	if *reply.Code != 0 {
-		if path == "/verify-code/check" {
-			return apiError{401, "验证码不正确、已使用或已过期"}
-		}
 		return &smsRequestError{public: apiError{502, "短信未能受理，请联系管理员检查平台配置或额度"}, httpStatus: resp.StatusCode, platformCode: reply.Code}
 	}
 	return nil
@@ -97,7 +90,7 @@ func (s *Server) sendSMS(w http.ResponseWriter, r *http.Request, _ *User) error 
 		if e = s.reserveSMSCooldown(p.Mobile); e != nil {
 			return e
 		}
-		if e = s.smsRequestWith(config, "/verify-code/send", map[string]string{"scene": config.LoginScene, "mobile": p.Mobile}); e != nil {
+		if e = s.sendLoginCode(config, p.Mobile, id); e != nil {
 			s.audit(id, "sms_send", "", "failed")
 			return e
 		}
@@ -129,7 +122,7 @@ func (s *Server) reserveSMSCooldown(mobile string) error {
 	return tx.Commit()
 }
 func (s *Server) smsLogin(w http.ResponseWriter, r *http.Request, _ *User) error {
-	config, enabled := s.smsSnapshot()
+	_, enabled := s.smsSnapshot()
 	if !enabled {
 		return apiError{503, "短信登录尚未配置，请使用密码登录"}
 	}
@@ -140,7 +133,7 @@ func (s *Server) smsLogin(w http.ResponseWriter, r *http.Request, _ *User) error
 	if e := decode(w, r, &p); e != nil {
 		return e
 	}
-	if !mobilePattern.MatchString(p.Mobile) || len(p.Code) < 4 || len(p.Code) > 12 {
+	if !mobilePattern.MatchString(p.Mobile) || len(p.Code) != 6 {
 		return bad("手机号或验证码格式不正确")
 	}
 	for _, c := range p.Code {
@@ -163,15 +156,16 @@ func (s *Server) smsLogin(w http.ResponseWriter, r *http.Request, _ *User) error
 	if e != nil {
 		return e
 	}
-	if e = s.smsRequestWith(config, "/verify-code/check", map[string]string{"scene": config.LoginScene, "mobile": p.Mobile, "code": p.Code}); e != nil {
-		return e
+	if !s.consumeSMSCode(p.Mobile, u.ID, p.Code) {
+		return apiError{401, "验证码不正确、已使用或已过期"}
 	}
-	// Recheck local status after the external operation; the account may have been disabled.
+	// Recheck the account before creating a session.
 	var accountEnabled bool
-	if e = s.DB.QueryRow("SELECT enabled FROM users WHERE id=?", u.ID).Scan(&accountEnabled); e != nil {
+	var accountMobile string
+	if e = s.DB.QueryRow("SELECT enabled,COALESCE(mobile,'') FROM users WHERE id=?", u.ID).Scan(&accountEnabled, &accountMobile); e != nil {
 		return e
 	}
-	if !accountEnabled {
+	if !accountEnabled || accountMobile != p.Mobile {
 		return apiError{401, "账号已停用"}
 	}
 	if !s.smsEnabled() {

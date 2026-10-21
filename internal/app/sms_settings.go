@@ -12,10 +12,11 @@ import (
 )
 
 type SMSConfig struct {
-	BaseURL    string `json:"base_url"`
-	AppKey     string `json:"app_key"`
-	AppSecret  string `json:"app_secret"`
-	LoginScene string `json:"login_scene"`
+	revision    int64
+	BaseURL     string `json:"base_url"`
+	AppKey      string `json:"app_key"`
+	AppSecret   string `json:"app_secret"`
+	TemplateKey string `json:"template_key"`
 }
 
 type SMSSettings struct {
@@ -37,6 +38,16 @@ func loadSMSSettings(db *sql.DB) (SMSSettings, error) {
 	if e := json.Unmarshal(b, &v); e != nil {
 		return v, e
 	}
+	// Preserve the former field on upgrade; it is now used as a template key.
+	if v.TemplateKey == "" {
+		var legacy struct {
+			LoginScene string `json:"login_scene"`
+		}
+		if e := json.Unmarshal(b, &legacy); e != nil {
+			return v, e
+		}
+		v.TemplateKey = legacy.LoginScene
+	}
 	v.Revision = revision
 	return v, nil
 }
@@ -47,11 +58,13 @@ func (s *Server) smsSnapshot() (SMSConfig, bool) {
 		return SMSConfig{}, false
 	}
 	v := s.smsSettings
-	return v.SMSConfig, v.Enabled && v.AppKey != "" && v.AppSecret != "" && v.LoginScene != ""
+	config := v.SMSConfig
+	config.revision = v.Revision
+	return config, v.Enabled && v.AppKey != "" && v.AppSecret != "" && v.TemplateKey != ""
 }
 func (s *Server) smsSettingsResponse() map[string]any {
 	v := s.smsSettings
-	return map[string]any{"enabled": v.Enabled, "base_url": v.BaseURL, "login_scene": v.LoginScene, "has_app_key": v.AppKey != "", "has_app_secret": v.AppSecret != "", "revision": v.Revision}
+	return map[string]any{"enabled": v.Enabled, "base_url": v.BaseURL, "template_key": v.TemplateKey, "has_app_key": v.AppKey != "", "has_app_secret": v.AppSecret != "", "revision": v.Revision}
 }
 func (s *Server) getSMSSettings(w http.ResponseWriter, _ *http.Request, u *User) error {
 	if e := superAdmin(u); e != nil {
@@ -83,8 +96,8 @@ func (s *Server) saveSMSSettings(w http.ResponseWriter, r *http.Request, u *User
 			return bad("短信凭证格式不正确")
 		}
 	}
-	if utf8.RuneCountInString(p.LoginScene) > 64 || strings.TrimSpace(p.LoginScene) != p.LoginScene || strings.ContainsAny(p.LoginScene, "\x00\r\n\t") {
-		return bad("登录场景不能超过 64 个字符，也不能包含首尾空白、换行或控制字符")
+	if utf8.RuneCountInString(p.TemplateKey) > 64 || strings.TrimSpace(p.TemplateKey) != p.TemplateKey || strings.ContainsAny(p.TemplateKey, "\x00\r\n\t") {
+		return bad("模板标识不能超过 64 个字符，也不能包含首尾空白、换行或控制字符")
 	}
 	s.smsMu.Lock()
 	defer s.smsMu.Unlock()
@@ -102,8 +115,8 @@ func (s *Server) saveSMSSettings(w http.ResponseWriter, r *http.Request, u *User
 		p.AppKey = ""
 		p.AppSecret = ""
 	}
-	if p.Enabled && (p.AppKey == "" || p.AppSecret == "" || p.LoginScene == "") {
-		return bad("启用短信登录前，请填写 AppKey、AppSecret 和已开通的登录场景")
+	if p.Enabled && (p.AppKey == "" || p.AppSecret == "" || p.TemplateKey == "") {
+		return bad("启用短信登录前，请填写 AK、SK 和模板标识 templateKey")
 	}
 	v := p.SMSSettings
 	v.BaseURL = strings.TrimRight(v.BaseURL, "/")
@@ -116,6 +129,9 @@ func (s *Server) saveSMSSettings(w http.ResponseWriter, r *http.Request, u *User
 		return e
 	}
 	s.smsSettings = v
+	s.smsCodeMu.Lock()
+	s.smsCodes = nil
+	s.smsCodeMu.Unlock()
 	s.audit(u.ID, "sms_settings_update", "sms", "ok")
 	writeJSON(w, 200, s.smsSettingsResponse())
 	return nil
@@ -141,8 +157,8 @@ func (s *Server) testSMSSettings(w http.ResponseWriter, r *http.Request, u *User
 	if p.Revision != settings.Revision {
 		return conflict("短信配置已更新，请重新加载、核对并保存后再测试")
 	}
-	if settings.BaseURL == "" || settings.AppKey == "" || settings.AppSecret == "" || settings.LoginScene == "" {
-		return bad("请先保存完整的短信接口基址、AppKey、AppSecret 和登录验证码场景")
+	if settings.BaseURL == "" || settings.AppKey == "" || settings.AppSecret == "" || settings.TemplateKey == "" {
+		return bad("请先保存完整的短信接口基址、AK、SK 和模板标识 templateKey")
 	}
 	blocked, err := s.limited(u.ID, ipKey(r), "sms_test", 5, 20)
 	if err != nil {
@@ -160,7 +176,11 @@ func (s *Server) testSMSSettings(w http.ResponseWriter, r *http.Request, u *User
 	masked := p.Mobile[:3] + "****" + p.Mobile[7:]
 	result := map[string]any{"accepted": true, "message": "平台已受理测试验证码，请检查手机是否收到。受理成功不代表已送达。", "mobile_masked": masked, "cooldown_seconds": 60, "config_revision": settings.Revision, "platform_code": 0, "http_status": 200}
 	auditResult := "accepted"
-	if err := s.smsRequestWith(settings.SMSConfig, "/verify-code/send", map[string]string{"scene": settings.LoginScene, "mobile": p.Mobile}); err != nil {
+	code, err := newSMSCode()
+	if err != nil {
+		return err
+	}
+	if err := s.sendTemplateCode(settings.SMSConfig, p.Mobile, code, newID()); err != nil {
 		result["accepted"] = false
 		result["message"] = "测试发送未完成，请核对已保存的短信配置。不要连续重发。"
 		delete(result, "platform_code")

@@ -120,8 +120,8 @@ func TestIntegrationSMSAdministration(t *testing.T) {
 		if r.Header.Get("X-Gm-AppKey") != "test-key" || r.Header.Get("X-Gm-Sign") != SMSSign("test-key", "test-secret", r.Header.Get("X-Gm-Timestamp"), r.Header.Get("X-Gm-Nonce"), body) {
 			t.Error("configured credentials not used")
 		}
-		if !strings.Contains(string(body), `"scene":"staff.login"`) {
-			t.Error("configured scene not used")
+		if !strings.Contains(string(body), `"templateKey":"standard_code"`) {
+			t.Error("configured template key not used")
 		}
 		io.WriteString(w, `{"code":0}`)
 	}))
@@ -135,7 +135,7 @@ func TestIntegrationSMSAdministration(t *testing.T) {
 	delete(config, "has_app_secret")
 	config["enabled"] = true
 	config["base_url"] = provider.URL
-	config["login_scene"] = "staff.login"
+	config["template_key"] = "standard_code"
 	expectStatus(t, call(t, s, c["admin"], "PUT", "/api/admin/sms-settings", config), 400)
 	config["app_key"] = "test-key"
 	config["app_secret"] = "test-secret"

@@ -37,6 +37,8 @@ type Server struct {
 	siteLogo      []byte
 	smsMu         sync.RWMutex
 	smsSettings   SMSSettings
+	smsCodeMu     sync.Mutex
+	smsCodes      map[string]smsLoginCode
 	archiveMu     sync.Mutex
 	archiveBusy   bool
 	archiveJob    *folderArchive

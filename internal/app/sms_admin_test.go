@@ -17,7 +17,7 @@ import (
 
 func saveTestSMS(t *testing.T, s *Server, client testClient, baseURL string, enabled bool) {
 	t.Helper()
-	expectStatus(t, call(t, s, client, "PUT", "/api/admin/sms-settings", map[string]any{"enabled": enabled, "base_url": baseURL, "app_key": "mock-key", "app_secret": "mock-secret", "login_scene": "staff.login", "revision": s.smsSettings.Revision}), 200)
+	expectStatus(t, call(t, s, client, "PUT", "/api/admin/sms-settings", map[string]any{"enabled": enabled, "base_url": baseURL, "app_key": "mock-key", "app_secret": "mock-secret", "template_key": "standard_code", "revision": s.smsSettings.Revision}), 200)
 }
 
 func TestIntegrationAdministratorSMSTest(t *testing.T) {
@@ -27,9 +27,14 @@ func TestIntegrationAdministratorSMSTest(t *testing.T) {
 	provider := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		requests.Add(1)
 		body, _ := io.ReadAll(r.Body)
-		var payload map[string]string
-		if r.URL.Path != "/verify-code/send" || json.Unmarshal(body, &payload) != nil || len(payload) != 2 || payload["scene"] != "staff.login" || !mobilePattern.MatchString(payload["mobile"]) {
-			t.Error("test send did not use the saved verification-code contract")
+		var payload struct {
+			TemplateKey string            `json:"templateKey"`
+			Mobile      string            `json:"mobile"`
+			Variables   map[string]string `json:"variables"`
+			RequestID   string            `json:"requestId"`
+		}
+		if r.URL.Path != "/sms/send" || json.Unmarshal(body, &payload) != nil || payload.TemplateKey != "standard_code" || !mobilePattern.MatchString(payload.Mobile) || len(payload.Variables["code"]) != 6 || len(payload.RequestID) != 32 {
+			t.Error("test send did not use the saved template-send contract")
 		}
 		if r.Header.Get("X-Gm-AppKey") != "mock-key" || r.Header.Get("X-Gm-Sign") != SMSSign("mock-key", "mock-secret", r.Header.Get("X-Gm-Timestamp"), r.Header.Get("X-Gm-Nonce"), body) {
 			t.Error("test send did not use the saved credentials and exact body signature")
@@ -134,12 +139,12 @@ func TestLiveAdministratorSMSTestOnce(t *testing.T) {
 		t.Skip("real SMS requires explicit recipient and one-message authorization")
 	}
 	key, secret := os.Getenv("GMPAN_SMS_LIVE_KEY"), os.Getenv("GMPAN_SMS_LIVE_SECRET")
-	phone, scene := os.Getenv("GMPAN_SMS_LIVE_MOBILE"), os.Getenv("GMPAN_SMS_LIVE_SCENE")
+	phone, scene := os.Getenv("GMPAN_SMS_LIVE_MOBILE"), os.Getenv("GMPAN_SMS_LIVE_TEMPLATE")
 	if key == "" || secret == "" || scene == "" || !mobilePattern.MatchString(phone) {
 		t.Fatal("live SMS configuration is incomplete; no message sent")
 	}
 	s, clients := testServer(t)
-	s.smsSettings.SMSConfig = SMSConfig{BaseURL: "https://sms.gmwang.com.cn/api/v1", AppKey: key, AppSecret: secret, LoginScene: scene}
+	s.smsSettings.SMSConfig = SMSConfig{BaseURL: "https://sms.gmwang.com.cn/api/v1", AppKey: key, AppSecret: secret, TemplateKey: scene}
 	marker, err := os.OpenFile(os.Getenv("GMPAN_SMS_LIVE_MARKER"), os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0600)
 	if err != nil {
 		t.Fatal("one-send marker unavailable or already present; refusing a second send")

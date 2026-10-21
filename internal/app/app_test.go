@@ -78,7 +78,7 @@ func TestStorageBoundaryAndHeaders(t *testing.T) {
 	}
 }
 func TestSMSWireProtocol(t *testing.T) {
-	if got := SMSSign("test-key", "test-secret", "1730000000", "0123456789abcdef0123456789abcdef", []byte(`{"scene":"login","mobile":"13800000000"}`)); got != "86936b0a32a701d833c70c6d22d32d957513db39e7d1eccad80f996624dcaa51" {
+	if got := SMSSign("test-key", "test-secret", "1730000000", "0123456789abcdef0123456789abcdef", []byte(`{"templateKey":"standard_code","mobile":"13800000000","variables":{"code":"123456"},"requestId":"mock-request-001"}`)); got != "751470e35f3697a23069c411d77e78a8ae1590e7c588a0d2afd9814451281a0f" {
 		t.Fatalf("HMAC golden vector mismatch: %s", got)
 	}
 	count := 0
@@ -93,8 +93,13 @@ func TestSMSWireProtocol(t *testing.T) {
 		if r.Header.Get("X-Gm-Sign") != SMSSign("test-key", "test-secret", r.Header.Get("X-Gm-Timestamp"), nonce, body) {
 			t.Error("body signature mismatch")
 		}
-		var payload map[string]string
-		if json.Unmarshal(body, &payload) != nil || payload["scene"] != "login" || payload["mobile"] != "13800000000" {
+		var payload struct {
+			TemplateKey string            `json:"templateKey"`
+			Mobile      string            `json:"mobile"`
+			Variables   map[string]string `json:"variables"`
+			RequestID   string            `json:"requestId"`
+		}
+		if r.URL.Path != "/sms/send" || json.Unmarshal(body, &payload) != nil || payload.TemplateKey != "standard_code" || payload.Mobile != "13800000000" || payload.Variables["code"] != "123456" || payload.RequestID != "mock-request-001" {
 			t.Error("invalid body")
 		}
 		w.Header().Set("Content-Type", "application/json")
@@ -102,16 +107,16 @@ func TestSMSWireProtocol(t *testing.T) {
 	}))
 	defer server.Close()
 	s := &Server{smsSettings: SMSSettings{SMSConfig: SMSConfig{BaseURL: server.URL, AppKey: "test-key", AppSecret: "test-secret"}, Revision: 1}, smsClient: server.Client()}
-	payload := map[string]string{"scene": "login", "mobile": "13800000000"}
-	if e := s.smsRequest("/verify-code/send", payload); e != nil {
+	config := SMSConfig{BaseURL: server.URL, AppKey: "test-key", AppSecret: "test-secret", TemplateKey: "standard_code"}
+	if e := s.sendTemplateCode(config, "13800000000", "123456", "mock-request-001"); e != nil {
 		t.Fatal(e)
 	}
 	response = `{}`
-	if e := s.smsRequest("/verify-code/send", payload); e == nil {
+	if e := s.sendTemplateCode(config, "13800000000", "123456", "mock-request-001"); e == nil {
 		t.Fatal("missing code treated as success")
 	}
 	response = `{"code":20003}`
-	if e := s.smsRequest("/verify-code/send", payload); e == nil {
+	if e := s.sendTemplateCode(config, "13800000000", "123456", "mock-request-001"); e == nil {
 		t.Fatal("business error treated as success")
 	}
 	if count != 3 {

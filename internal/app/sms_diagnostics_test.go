@@ -19,7 +19,7 @@ func TestSMSAdministratorDiagnostics(t *testing.T) {
 		{"clock", `{"code":20002}`, "校准部署服务器时间", 200},
 		{"whitelist", `{"code":20005}`, "出口公网 IP", 403},
 		{"quota", `{"code":30001}`, "额度", 200},
-		{"scene", `{"code":10001}`, "场景标识", 200},
+		{"parameters", `{"code":10001}`, "templateKey", 200},
 		{"template", `{"code":40003}`, "模板授权", 200},
 		{"unknown", `{"code":98765,"msg":"private-secret"}`, "98765", 200},
 		{"html", `<html>private-secret</html>`, "HTTP 502", 502},
@@ -32,7 +32,7 @@ func TestSMSAdministratorDiagnostics(t *testing.T) {
 			}))
 			defer provider.Close()
 			s := &Server{smsClient: provider.Client()}
-			err := s.smsRequestWith(SMSConfig{BaseURL: provider.URL, AppKey: "private-key", AppSecret: "private-secret"}, "/verify-code/send", map[string]string{"scene": "login", "mobile": "13800000000"})
+			err := s.smsRequestWith(SMSConfig{BaseURL: provider.URL, AppKey: "private-key", AppSecret: "private-secret"}, "/sms/send", map[string]string{"templateKey": "standard_code", "mobile": "13800000000"})
 			var detail *smsRequestError
 			var public apiError
 			if !errors.As(err, &detail) || !errors.As(err, &public) || public.Status != 502 {
@@ -58,7 +58,7 @@ func TestSMSAdministratorDiagnostics(t *testing.T) {
 	client.Timeout = 10 * time.Millisecond
 	s := &Server{smsClient: client}
 	var detail *smsRequestError
-	if err := s.smsRequestWith(SMSConfig{BaseURL: provider.URL}, "/verify-code/send", nil); !errors.As(err, &detail) || !strings.Contains(detail.diagnostic(), "超时") {
+	if err := s.smsRequestWith(SMSConfig{BaseURL: provider.URL}, "/sms/send", nil); !errors.As(err, &detail) || !strings.Contains(detail.diagnostic(), "超时") {
 		t.Fatal("timeout must report uncertain acceptance without retrying")
 	}
 }
