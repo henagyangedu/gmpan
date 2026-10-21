@@ -61,6 +61,7 @@ type Wizard struct {
 	mu       sync.Mutex
 	state    Progress
 	checking bool
+	recovery *recoveryTarget
 	log      *os.File
 	Quit     func()
 }
@@ -122,6 +123,8 @@ func reply(out http.ResponseWriter, status int, value any) {
 
 func (w *Wizard) api(out http.ResponseWriter, r *http.Request) {
 	switch r.Method + " " + r.URL.Path {
+	case "POST /api/setup/recovery-info", "POST /api/setup/recovery-reset":
+		w.recoverPassword(out, r)
 	case "GET /api/setup/uninstall-info":
 		services, err := inspectUninstallServices()
 		if err != nil {
@@ -177,10 +180,10 @@ func (w *Wizard) api(out http.ResponseWriter, r *http.Request) {
 		w.browseDirectories(out, r)
 	case "POST /api/setup/exit":
 		w.mu.Lock()
-		busy := w.state.Running
+		busy := w.state.Running || w.checking
 		w.mu.Unlock()
 		if busy {
-			reply(out, 409, map[string]string{"message": "安装尚在运行，请等待完成或失败处理结束"})
+			reply(out, 409, map[string]string{"message": "当前操作尚在运行，请等待完成或失败处理结束"})
 			return
 		}
 		reply(out, 200, map[string]string{"message": "安装向导已关闭"})
